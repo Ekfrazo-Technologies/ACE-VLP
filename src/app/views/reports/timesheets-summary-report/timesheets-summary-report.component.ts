@@ -1,104 +1,79 @@
-import { Component, Input, OnChanges, OnInit, SimpleChanges } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonServiceService } from '../../../service/common-service.service';
 import { tableColumns } from './timesheets-summary-report-config'
 import { ApiserviceService } from '../../../service/apiservice.service';
-import { downloadFileFromUrl } from '../../../shared/file-download.util';
 import { buildPaginationQuery } from '../../../shared/pagination.util';
 import { environment } from '../../../../environments/environment';
 import { JobTimeSheetDetailsPopupComponent } from '../common/job-time-sheet-details-popup/job-time-sheet-details-popup.component';
 import { MatDialog } from '@angular/material/dialog';
-import { DatePipe } from '@angular/common';
 import { FilterQueryService } from '../../../service/filter-query.service';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 @Component({
   selector: 'app-timesheets-summary-report',
   templateUrl: './timesheets-summary-report.component.html',
   styleUrls: ['./timesheets-summary-report.component.scss']
 })
-export class TimesheetsSummaryReportComponent implements OnInit {
+export class TimesheetsSummaryReportComponent implements OnInit, OnDestroy {
+  private destroy$ = new Subject<void>();
   BreadCrumbsTitle: any = 'Timesheet summary report';
   term: string = '';
   tableSize: number = 50;
-     page: any = 1;
-     tableSizes = [50,75,100];
-     tableConfig:any = {
-       columns: [],
-       data: [],
-       searchTerm: '',
-       actions: [],
-       accessConfig: [],
-       tableSize: 50,
-       pagination: true,
-       showDownload:false,
-       reset:true,
-     };
-     tabStatus:any='True';
-     allJobStatus:any=[];
-     statusList:String[]=[];
-     fromDate:any = {};
-      selectedDate: any;
-      time = {
-        start_date: '',
-        end_date: ''
-      };
-      user_id:any;
-     userRole:any;
-     client_id:any;
-     isIncludeAllJobEnable:boolean=true;
-     isIncludeAllJobValue:boolean=false;
-    jobFilterList: any = [];
-    clientName: { id: any; name: string; }[];
-    jobName: { id: any; name: string; }[];
-    statusName: { id: any; name: string; }[];
-    selectedClientIds: any = [];
-    selectedJobIds: any = [] ;
-    selectedEmployeeIds: any = [];
-    selectedStatusIds: any = [];
-    formattedData: any = [];
-    sortValue: string = '';
-    directionValue: string = '';
+  page: any = 1;
+  tableConfig: any = {
+    columns: [],
+    data: [],
+    searchTerm: '',
+    actions: [],
+    accessConfig: [],
+    tableSize: 50,
+    pagination: true,
+    showDownload: false,
+    reset: true,
+  };
+  time = {
+    start_date: '',
+    end_date: ''
+  };
+  user_id: any;
+  userRole: any;
+  client_id: any;
+  clientName: { id: any; name: string; }[] = [];
+  jobName: { id: any; name: string; }[] = [];
+  statusName: { id: any; name: string; }[] = [];
+  selectedClientIds: any = [];
+  selectedJobIds: any = [];
+  selectedEmployeeIds: any = [];
+  selectedStatusIds: any = [];
+  formattedData: any = [];
+  sortValue: string = '';
+  directionValue: string = '';
    constructor(
        private common_service:CommonServiceService,
        private api:ApiserviceService,
        private dialog:MatDialog,
-       private datePipe:DatePipe,
        private filterQueryService: FilterQueryService
      ) {
       this.user_id = sessionStorage.getItem('user_id');
       this.userRole = sessionStorage.getItem('user_role_name');
-        // this.getJobList();
-        // this.getClientList();
-        // this.getStatusList();
       }
   
-     ngOnInit(): void {
-       this.common_service.setTitle(this.BreadCrumbsTitle)
-       this.tableConfig = tableColumns;
-       setTimeout(() => {
-        this.getTableData({
-              page: this.page,
-              pageSize: this.tableSize,
-              searchTerm: this.term
-            });
-       }, 500);
-     }
-  
-     getJobStatusList() {
-      this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).subscribe(
-        (resData: any) => {
-          if(resData){
-            this.allJobStatus = resData;
-            this.getTableData({
-              page: this.page,
-              pageSize: this.tableSize,
-              searchTerm: this.term
-            });
-          }
-        },
-        (error:any)=>{
-          this.api.showError(error?.error?.detail);
-        }
-      )
-    }
+  ngOnInit(): void {
+    this.common_service.setTitle(this.BreadCrumbsTitle)
+    this.tableConfig = tableColumns;
+    setTimeout(() => {
+      this.getTableData({
+        page: this.page,
+        pageSize: this.tableSize,
+        searchTerm: this.term
+      });
+    }, 500);
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
   
      // Called when user changes page number from the dynamic table
    onTableDataChange(event: any) {
@@ -134,10 +109,10 @@ export class TimesheetsSummaryReportComponent implements OnInit {
    }
   
    // Called from <app-dynamic-table> via @Output actionEvent
-   handleAction(event: { actionType: string; detail: any,key:any,formfilter?:boolean }) {
+   handleAction(event: { actionType: string; detail: any; key: any; formfilter?: boolean; row?: any }) {
      switch (event.actionType) {
         case 'navigate':
-          this.viewtimesheetDetails(event['row']);
+          this.viewtimesheetDetails(event.row);
          break;
         case 'tableDataChange':
          this.onTableDataChange(event.detail);
@@ -178,13 +153,13 @@ export class TimesheetsSummaryReportComponent implements OnInit {
         })
          break;
          case 'weekDate':
-        this.fromDate = event.detail;
         this.getTableData({ 
           page: 1,
           pageSize: this.tableSize,
           searchTerm: this.term,
           client_ids: this.selectedClientIds,
-          job_ids: this.selectedJobIds, 
+          job_ids: this.selectedJobIds,
+          employee_ids: this.selectedEmployeeIds,
         })
         break;
        default:
@@ -198,7 +173,7 @@ export class TimesheetsSummaryReportComponent implements OnInit {
      }
    }
   
-   onSorting(data){
+   onSorting(data: any){
     this.directionValue = data.detail.directionValue;
     this.sortValue = data.detail.sortValue;
     this.getTableData({
@@ -212,59 +187,33 @@ export class TimesheetsSummaryReportComponent implements OnInit {
    }
 
    resetData(data:any){
-    this.formattedData =[];
-    this.term = ''
+    this.formattedData = [];
+    this.term = '';
     this.page = 1;
     this.tableSize = 50;
     this.selectedClientIds = [];
     this.selectedJobIds = [];
     this.selectedStatusIds = [];
     this.selectedEmployeeIds = [];
-    this.time.start_date= '';
-    this.time.end_date= '';
-    this.directionValue ='';
+    this.time.start_date = '';
+    this.time.end_date = '';
+    this.directionValue = '';
     this.sortValue = '';
-     this.tableConfig = {
-       columns: [],
-       data: this.formattedData,
-       searchTerm: '',
-       actions: [],
-       accessConfig: [],
-       tableSize: 50,
-       pagination: true,
-       searchable: true,
-       startAndEndDateFilter: true,
-       showDownload:true,
-       reset:true,
-       searchPlaceholder:'Search by Client/Job/Employee',
-     };
-     this.getTableData({
-        page: this.page,
-        pageSize: this.tableSize,
-        searchTerm: this.term
-      });
+    this.getTableData({
+      page: this.page,
+      pageSize: this.tableSize,
+      searchTerm: this.term
+    });
    }
    
   onApplyFilter(filteredData: any[], filteredKey: string): void {
-  
     if (filteredKey === 'client-ids') {
       this.selectedClientIds = filteredData;
-      // if(filteredData && filteredData.length===0 || filteredData.length>1){
-      //   this.isIncludeAllJobEnable=true;
-      //   this.isIncludeAllJobValue=false;
-      //   this.client_id=null;
-      // }else{
-      //   this.isIncludeAllJobEnable=false;
-      // }
-      
-    }
-    if (filteredKey === 'job-ids') {
+    } else if (filteredKey === 'job-ids') {
       this.selectedJobIds = filteredData;
-    }
-    if (filteredKey === 'job-status-ids') {
+    } else if (filteredKey === 'job-status-ids') {
       this.selectedStatusIds = filteredData;
-    }
-    if (filteredKey === 'timesheet-employee-ids') {
+    } else if (filteredKey === 'timesheet-employee-ids') {
       this.selectedEmployeeIds = filteredData;
     }
   this.formattedData = [];
@@ -277,85 +226,21 @@ export class TimesheetsSummaryReportComponent implements OnInit {
       employee_ids: this.selectedEmployeeIds,
     });
   }
-   exportCsvOrPdf(fileType) {
-     const search = this.term?.trim().length >= 2? `search=${encodeURIComponent(this.term.trim())}&`: '';
-    let query = `?${search}download=true`
+   exportCsvOrPdf(fileType: string) {
+     const search = this.term?.trim().length >= 2 ? `search=${encodeURIComponent(this.term.trim())}&` : '';
+     let query = `?${search}download=true`;
      query += this.client_id ? `&client=${this.client_id}` : '';
-     query += (this.userRole ==='Admin' || (this.userRole !='Admin' && this.client_id)) ? '':`&employee-id=${this.user_id}`;
-        // Old filter query building (simple array join)
-        // if (this.selectedClientIds?.length) {
-        //   query += `&client-ids=[${this.selectedClientIds.join(',')}]`;
-        // }
-        // if (this.selectedJobIds?.length) {
-        //   query += `&job-ids=[${this.selectedJobIds.join(',')}]`;
-        // }
-        // // if (this.selectedStatusIds?.length) {
-        // //   query += `&job-status-ids=[${this.selectedStatusIds.join(',')}]`;
-        // // }
-        // if (this.selectedEmployeeIds?.length) {
-        //  query += `&employee-ids=[${this.selectedEmployeeIds.join(',')}]`;
-        // }
-        // New: FilterState-aware (handles select-all three-state logic)
-        query += this.buildQueryForFilter(this.selectedClientIds, 'client');
-        query += this.buildQueryForFilter(this.selectedJobIds, 'job');
-        query += this.buildQueryForFilter(this.selectedEmployeeIds, 'employee');
-        if(this.time?.start_date && this.time?.end_date){
-         query += `&timesheet-start-date=${this.time?.start_date}&timesheet-end-date=${this.time?.end_date}`;
-       }
-
-       const url = `${environment.live_url}/${environment.all_jobs}/${query}&file-type=${fileType}&report-type=timesheet-summary-report-new`;
-        window.open(url, '_blank');
+     query += (this.userRole === 'Admin' || (this.userRole !== 'Admin' && this.client_id)) ? '' : `&employee-id=${this.user_id}`;
+     query += this.buildQueryForFilter(this.selectedClientIds, 'client');
+     query += this.buildQueryForFilter(this.selectedJobIds, 'job');
+     query += this.buildQueryForFilter(this.selectedEmployeeIds, 'employee');
+     if (this.time?.start_date && this.time?.end_date) {
+       query += `&timesheet-start-date=${this.time?.start_date}&timesheet-end-date=${this.time?.end_date}`;
+     }
+     const url = `${environment.live_url}/${environment.all_jobs}/${query}&file-type=${fileType}&report-type=timesheet-summary-report-new`;
+     window.open(url, '_blank');
    }
-   getClientList(){
-  let query = `?status=True`;
-   query += this.userRole ==='Admin' ? '':`&employee-id=${this.user_id}`;
-    this.api.getData(`${environment.live_url}/${environment.clients}/${query}`).subscribe((res: any) => {
-      if(res){
-        this.clientName = res?.map((item: any) => ({
-          id: item.id,
-          name: item.client_name
-        }));
-      }
-    })
-    return this.clientName;
-  }
-    getJobList(){
-      let query = `?status=${this.tabStatus}`;
-      query += this.userRole ==='Admin' ? '':`&employee-id=${this.user_id}`;
-      this.api.getData(`${environment.live_url}/${environment.jobs}/${query}`).subscribe((res: any) => {
-        if(res){
-          this.jobName = res?.map((item: any) => ({
-            id: item.id,
-            name: item.job_name
-          }));
-        }
-      })
-      return this.jobName;
-    }
-  getStatusList(){
-    this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).subscribe((res: any) => {
-      if(res){
-        this.statusName = res?.map((item: any) => ({
-          id: item.id,
-          name: item.status_name
-        }));
-      }
-    })
-    // console.log('statusName',this.statusName);
-    return this.statusName;
-  }
-  getJobTypeList(){
-    this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).subscribe((res: any) => {
-      if(res){
-        this.statusName = res?.map((item: any) => ({
-          id: item.id,
-          name: item.status_name
-        }));
-      }
-    })
-    // console.log('statusName',this.statusName);
-    return this.statusName;
-  }
+
   
      onSearch(term: string): void {
        this.term = term;
@@ -370,34 +255,7 @@ export class TimesheetsSummaryReportComponent implements OnInit {
      }
   
   
-  jobStatusList(status:any){
-    const isActive = status === 'True';
-    this.statusList = this.allJobStatus
-      ?.filter((jobstatus: any) => isActive
-        ? jobstatus?.status_name !== "Cancelled" && jobstatus?.status_name !== "Completed"
-        : jobstatus?.status_name === "Cancelled" || jobstatus?.status_name === "Completed")
-      .map((status: any) => status?.status_name);
-  }
-  // Send Email Action Button event
-  public sendEamils(){
-     let finalQuery = `?send_mail=True&file-type=pdf&report-type=job-time-report`;
-     finalQuery += this.client_id ? `&client=${this.client_id}` : '';
-     this.jobStatusList(this.tabStatus);
-    //  finalQuery += `&job-status=[${this.statusList}]`;
-      // Yet to integrate
-        if(this.client_id){
-                this.api.getData(`${environment.live_url}/${environment.jobs}/${finalQuery}`).subscribe((respData: any) => {
-                    if (respData) {
-                this.api.showSuccess(respData['message']);
-                 }
-                  },
-                  (error:any)=>{
-                    this.api.showError(error?.error?.detail);
-  
-  }
-  )
-  }
-  }
+
   public viewtimesheetDetails(item:any){
         this.dialog.open(JobTimeSheetDetailsPopupComponent, {
         panelClass: 'custom-details-dialog',
@@ -422,7 +280,7 @@ export class TimesheetsSummaryReportComponent implements OnInit {
 
       // new code
       private updateFilterColumn(key: string, cache: any) {
-          this.tableConfig.columns = this.tableConfig.columns.map(col =>
+          this.tableConfig.columns = this.tableConfig.columns.map((col: any) =>
             col.paramskeyId === key
               ? {
                   ...col,
@@ -435,63 +293,39 @@ export class TimesheetsSummaryReportComponent implements OnInit {
           );
         }
       
-      async getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string;client_ids?: any[]; job_ids?: any[];employee_ids?:any; fromdate?:any; startDate?; endDate? }) {
-    let finalQuery;
-     this.formattedData = [];
-     const page = params?.page ?? this.page;
-     const pageSize = params?.pageSize ?? this.tableSize;
-     const searchTerm = params?.searchTerm ?? this.term;
-    //  const today = new Date();
-    //   const dayOfWeek = today.getDay(); 
-    //   const startOfWeek = new Date(today);
-    //   startOfWeek.setDate(today.getDate() - dayOfWeek);
-    //   const endOfWeek = new Date(today);
-    //   endOfWeek.setDate(today.getDate() + (6 - dayOfWeek));
-    //   this.time.start_date = startOfWeek.toISOString();
-    //   this.time.end_date = endOfWeek.toISOString();
-     const query = buildPaginationQuery({ page, pageSize, searchTerm });
-     let disableFlag = true;
-     this.jobStatusList(this.tabStatus);
-      finalQuery = query 
-      finalQuery += (this.userRole ==='Admin' || (this.userRole !='Admin' && this.client_id)) ? '':`&employee-id=${this.user_id}`;
-      finalQuery += this.client_id ? `&client=${this.client_id}` : '';
-      finalQuery += `&report-type=timesheet-summary-report-new`;
-        // Old filter query building (simple array join)
-        // if (params?.client_ids?.length) {
-        //   finalQuery += `&client-ids=[${params.client_ids.join(',')}]`;
-        // }
-        // if (params?.job_ids?.length) {
-        //   finalQuery += `&job-ids=[${params.job_ids.join(',')}]`;
-        // }
-        // if (params?.employee_ids?.length) {
-        //   finalQuery += `&employee-ids=[${params.employee_ids.join(',')}]`;
-        // }
-        // New: FilterState-aware (handles select-all three-state logic)
-        finalQuery += this.buildQueryForFilter(params?.client_ids, 'client');
-        finalQuery += this.buildQueryForFilter(params?.job_ids, 'job');
-        finalQuery += this.buildQueryForFilter(params?.employee_ids, 'employee');
-        if(this.directionValue && this.sortValue){
-          finalQuery += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`;
-        }
-      //  const selected_startDate = this.datePipe.transform(params?.fromdate?.start_date, 'yyyy-MM-dd') ;
-      //  const selected_endtDate = this.datePipe.transform(params?.fromdate?.end_date, 'yyyy-MM-dd') ;
-      //  const current_startDate = this.datePipe.transform(startOfWeek, 'yyyy-MM-dd')
-      //  const current_endtDate = this.datePipe.transform(endOfWeek, 'yyyy-MM-dd')
-       if(this.time?.start_date && this.time?.end_date){
-         disableFlag=this.getDisableDownload(this.time?.start_date, this.time?.end_date);
-         finalQuery += `&timesheet-start-date=${this.time?.start_date}&timesheet-end-date=${this.time?.end_date}`;
-       }
-      await this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).subscribe((res: any) => {
+      getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string; client_ids?: any[]; job_ids?: any[]; employee_ids?: any; fromdate?: any; startDate?: any; endDate?: any }) {
+    this.formattedData = [];
+    const page = params?.page ?? this.page;
+    const pageSize = params?.pageSize ?? this.tableSize;
+    const searchTerm = params?.searchTerm ?? this.term;
+    const query = buildPaginationQuery({ page, pageSize, searchTerm });
+    let disableFlag = true;
+    let finalQuery = query;
+    finalQuery += (this.userRole === 'Admin' || (this.userRole !== 'Admin' && this.client_id)) ? '' : `&employee-id=${this.user_id}`;
+    finalQuery += this.client_id ? `&client=${this.client_id}` : '';
+    finalQuery += `&report-type=timesheet-summary-report-new`;
+    finalQuery += this.buildQueryForFilter(params?.client_ids, 'client');
+    finalQuery += this.buildQueryForFilter(params?.job_ids, 'job');
+    finalQuery += this.buildQueryForFilter(params?.employee_ids, 'employee');
+    if (this.directionValue && this.sortValue) {
+      finalQuery += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`;
+    }
+    if (this.time?.start_date && this.time?.end_date) {
+      disableFlag = this.getDisableDownload(this.time?.start_date, this.time?.end_date);
+      finalQuery += `&timesheet-start-date=${this.time?.start_date}&timesheet-end-date=${this.time?.end_date}`;
+    }
+    this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe((res: any) => {
         if(res.results){
         this.formattedData = res.results?.map((item: any, i: number) => ({
           sl: (page - 1) * pageSize + i + 1,
           ...item,
-          // is_primary:item?.employees?.find((emp: any) => emp?.is_primary === true)?.employee_name || '',
         }));
           this.tableConfig = {
               columns: tableColumns?.map(col => {
                  let filterOptions:any = [];
-                  const existingCol = this.tableConfig?.columns?.find(c => c.key === col.key);
+                  const existingCol = this.tableConfig?.columns?.find((c: any) => c.key === col.key);
                   if (existingCol?.filterOptions?.length) {
                     filterOptions = existingCol.filterOptions;
                   } else if (col.filterable) {
@@ -504,16 +338,6 @@ export class TimesheetsSummaryReportComponent implements OnInit {
                         filterOptions = this.statusName;
                       }
                   }
-  
-                //  if (col.filterable) {
-                //    if (col.key === 'client_name') {
-                //      filterOptions = this.clientName;
-                //    }else if (col.key === 'job_name') {
-                //      filterOptions = this.jobName;
-                //    }else if (col.key === 'job_status_name') {
-                //      filterOptions = this.statusName;
-                //    }
-                //  }
                  return {
                    ...col,
                    filterOptions,
@@ -533,12 +357,6 @@ export class TimesheetsSummaryReportComponent implements OnInit {
          searchable: true,
          startAndEndDateFilter: true,
          reset:true,
-        //  headerTabs:true,
-        //  showIncludeAllJobs:true,
-        //  includeAllJobsEnable:this.isIncludeAllJobEnable ? this.isIncludeAllJobEnable : false,
-        //  includeAllJobsValue:this.isIncludeAllJobValue ? this.isIncludeAllJobValue : false,
-        //  selectedClientId:this.client_id ? this.client_id:null,
-        //  sendEmail:true,
          currentPage:page,
          disableDownload: disableFlag,
          totalRecords: res.total_no_of_record,
@@ -568,12 +386,6 @@ export class TimesheetsSummaryReportComponent implements OnInit {
           tableSize: pageSize,
           pagination: true,
           searchable: true,
-          // headerTabs:true,
-          // showIncludeAllJobs:true,
-          // includeAllJobsEnable:this.isIncludeAllJobEnable ? this.isIncludeAllJobEnable : false,
-          // includeAllJobsValue:this.isIncludeAllJobValue ? this.isIncludeAllJobValue : false,
-          // selectedClientId:this.client_id ? this.client_id:null,
-          // sendEmail:true,
           currentPage:page,
           totalRecords: 0,
           showDownload:true,
@@ -655,13 +467,9 @@ export class TimesheetsSummaryReportComponent implements OnInit {
           query +=  `&is_active=True&employee=True`
            query += this.userRole === 'Admin' ? '' : `&reporting_manager_id=${this.user_id}`
         } 
-        // if (key === 'timesheet-task-ids') {
-        //   // Task filter static
-        //   this.updateFilterColumn(key, { data: this.taskName, page: 1, total: this.taskName.length, searchTerm: '' });
-        //   return;
-        // }
       
         this.api.getData(`${environment.live_url}/${endpoint}/${query}`)
+          .pipe(takeUntil(this.destroy$))
           .subscribe((res: any) => {
             if (!res) return;
       
@@ -679,7 +487,7 @@ export class TimesheetsSummaryReportComponent implements OnInit {
       
             cache.data = [
               ...cache.data,
-              ...newData.filter(opt => !cache.data.some(existing => existing.id === opt.id))
+              ...newData.filter((opt: any) => !cache.data.some((existing: any) => existing.id === opt.id))
             ];
             cache.page = nextPage;
             cache.total = res.total_no_of_record || cache.total;
