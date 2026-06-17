@@ -1,25 +1,26 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { tableColumns } from './job-status-report-config'
 import { CommonServiceService } from '../../../service/common-service.service';
 import { ApiserviceService } from '../../../service/apiservice.service';
-import { downloadFileFromUrl } from '../../../shared/file-download.util';
 import { buildPaginationQuery } from '../../../shared/pagination.util';
-import { getUniqueValues3 } from '../../../shared/unique-values.utils';
 import { environment } from '../../../../environments/environment';
 import { FilterQueryService } from '../../../service/filter-query.service';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 
 @Component({
   selector: 'app-job-status-report',
   templateUrl: './job-status-report.component.html',
   styleUrls: ['./job-status-report.component.scss']
 })
-export class JobStatusReportComponent implements OnInit {
+export class JobStatusReportComponent implements OnInit, OnDestroy {
+
+ private destroy$ = new Subject<void>();
 
  BreadCrumbsTitle: any = 'Job Status Report';
    term: string = '';
    tableSize: number = 50;
    page: any = 1;
-   tableSizes = [50,75,100];
    tableConfig:any = {
      columns: [],
      data: [],
@@ -45,15 +46,14 @@ export class JobStatusReportComponent implements OnInit {
    client_id:any = null;
    isIncludeAllJobEnable:boolean=true;
    isIncludeAllJobValue:boolean=false;
-  jobFilterList: any = [];
-  clientName: { id: any; name: string; }[];
-  jobName: { id: any; name: string; }[];
-  groupName: { id: any; name: string; }[];
-  statusName: { id: any; name: string; }[];
+  clientName: { id: any; name: string; }[] = [];
+  jobName: { id: any; name: string; }[] = [];
+  groupName: { id: any; name: string; }[] = [];
+  statusName: { id: any; name: string; }[] = [];
   selectedClientIds: any = [];
   selectedJobIds: any = [];
   selectedGroupIds: any = [];
-  selectedDate: string;
+  selectedDate: string = '';
   jobAllocationDate: any;
   selectedStatusIds: any = [];
   selectedStatusDate: any;
@@ -70,7 +70,7 @@ export class JobStatusReportComponent implements OnInit {
     this.userRole = sessionStorage.getItem('user_role_name');
     }
 
-   async ngOnInit() {
+   ngOnInit() {
      this.common_service.setTitle(this.BreadCrumbsTitle)
      this.tableConfig = tableColumns;
      setTimeout(() => {
@@ -78,8 +78,13 @@ export class JobStatusReportComponent implements OnInit {
     },500)
    }
 
+   ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+   }
+
    getJobStatusList() {
-    this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).subscribe(
+    this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).pipe(takeUntil(this.destroy$)).subscribe(
       (resData: any) => {
         if(resData){
           this.allJobStatus = resData;
@@ -135,7 +140,7 @@ export class JobStatusReportComponent implements OnInit {
  }
 
  // Called from <app-dynamic-table> via @Output actionEvent
- handleAction(event: { actionType: string; detail: any,key:string, fromFilter?: boolean }) {
+ handleAction(event: { actionType: string; detail: any; key: string; fromFilter?: boolean; action?: any; client_id?: any }) {
   switch (event.actionType) {
      case 'tableDataChange':
        this.onTableDataChange(event.detail);
@@ -229,7 +234,7 @@ export class JobStatusReportComponent implements OnInit {
    }
  }
 
- onSorting(data){
+ onSorting(data: any){
   this.directionValue = data.detail.directionValue;
   this.sortValue = data.detail.sortValue;
   this.getTableData({
@@ -263,7 +268,7 @@ export class JobStatusReportComponent implements OnInit {
         && filteredData?.includeAlljobsids?.length === 1) {
        this.client_id = filteredData.includeAlljobsids[0];
       this.isIncludeAllJobEnable = false;
-    }else{
+    } else if (count !== 1) {
       this.client_id = null;
     }
   }
@@ -353,7 +358,7 @@ public sendEamils(){
    finalQuery += `&job-status=[${this.statusList}]`;
     // Yet to integrate
       if(this.client_id){
-              this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).subscribe((respData: any) => {
+              this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).pipe(takeUntil(this.destroy$)).subscribe((respData: any) => {
                   if (respData) {
               this.api.showSuccess(respData['message']);
 
@@ -420,7 +425,7 @@ private buildQueryForFilter(filterValue: any, paramName: string): string {
 
 // new code
 private updateFilterColumn(key: string, cache: any) {
-    this.tableConfig.columns = this.tableConfig.columns.map(col =>
+  this.tableConfig.columns = this.tableConfig.columns.map((col: any) =>
       col.paramskeyId === key
         ? {
             ...col,
@@ -433,7 +438,7 @@ private updateFilterColumn(key: string, cache: any) {
     );
   }
 
-   exportCsvOrPdf(fileType) {
+  exportCsvOrPdf(fileType: string) {
     const search = this.term?.trim().length >= 2? `search=${encodeURIComponent(this.term.trim())}&`: '';
     let finalQuery = `?${search}job-status=[${this.statusList}]&report-type=job-status-report&non-productive-jobs=false&file-type=${fileType}&download=true`;
     finalQuery += (this.client_id && this.isIncludeAllJobValue) ? `&client=${this.client_id}` : '';
@@ -490,7 +495,7 @@ private updateFilterColumn(key: string, cache: any) {
   //  });
  }
 
-async getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string;client_ids?:any;job_ids?:any;group_ids?:any;job_allocation_date?:any;job_status_date?:any,job_status?: any[]; prime_emp?:any}) {
+getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string;client_ids?:any;job_ids?:any;group_ids?:any;job_allocation_date?:any;job_status_date?:any,job_status?: any[]; prime_emp?:any}) {
  let finalQuery;
    const page = params?.page ?? this.page;
     const pageSize = params?.pageSize ?? this.tableSize;
@@ -548,7 +553,7 @@ async getTableData(params?: { page?: number; pageSize?: number; searchTerm?: str
           // if(params?.prime_emp?.length){
           //   finalQuery += `&employee-ids=${params?.prime_emp}`;
           // }
-      await this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).subscribe((res: any) => {
+      this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).pipe(takeUntil(this.destroy$)).subscribe((res: any) => {
      if(res?.results){
       this.formattedData = res?.results?.map((item: any, i: number) => ({
         sl: (page - 1) * pageSize + i + 1,
@@ -564,7 +569,7 @@ async getTableData(params?: { page?: number; pageSize?: number; searchTerm?: str
             let filterOptions: any = [];
 
             // Try to retain old filterOptions
-            const existingCol = this.tableConfig?.columns?.find(c => c.key === col.key);
+            const existingCol = this.tableConfig?.columns?.find((c: any) => c.key === col.key);
             if (existingCol?.filterOptions?.length) {
               filterOptions = existingCol.filterOptions;
             } else if (col.filterable) {
@@ -735,6 +740,7 @@ getFilterOptions(event: { detail: any; key: string }) {
   // }
 
   this.api.getData(`${environment.live_url}/${endpoint}/${query}`)
+    .pipe(takeUntil(this.destroy$))
     .subscribe((res: any) => {
       if (!res) return;
 
@@ -753,7 +759,7 @@ getFilterOptions(event: { detail: any; key: string }) {
 
       cache.data = [
         ...cache.data,
-        ...newData.filter(opt => !cache.data.some(existing => existing.id === opt.id))
+        ...newData.filter((opt: any) => !cache.data.some((existing: any) => existing.id === opt.id))
       ];
       cache.page = nextPage;
       cache.total = res.total_no_of_record || cache.total;

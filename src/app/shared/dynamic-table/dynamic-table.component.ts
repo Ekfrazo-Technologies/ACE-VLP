@@ -844,7 +844,9 @@ export class DynamicTableComponent implements OnInit, OnChanges, DoCheck, AfterV
     }
   }
   private isIncludeFlagEnableLogic(): void {
-    const clientNameFilter = this.columnFilters['client_name'];
+    // Ignore the internal select-all sentinel when calculating effective client selection.
+    const clientNameFilter = (this.columnFilters['client_name'] || [])
+      .filter((id: any) => id !== '__select_all__');
     // Case 1: No client selected — clear everything
     if (!clientNameFilter || clientNameFilter.length === 0) {
       this.allow_sending_status = false;
@@ -1473,7 +1475,21 @@ export class DynamicTableComponent implements OnInit, OnChanges, DoCheck, AfterV
         // Select-all was active; detect newly excluded items
         const excluded = (col.filterOptions || []).filter((o: any) => !realNewSelected.includes(o.id));
         this.columnExcludedIds[key] = excluded;
-        if (excluded.length > 0) {
+        const totalRecord = this.columnTotalCount[key] || col.totalCount || (col.filterOptions || []).length;
+        // If every option is excluded, this is effectively an empty selection.
+        if (totalRecord > 0 && excluded.length >= totalRecord) {
+          this.columnSelectAll[key] = null;
+          this.columnExcludedIds[key] = [];
+          this.columnSelectedCount[key] = 0;
+          this.columnTotalCount[key] = 0;
+          this.selectedItemsMap[key] = [];
+          this.columnFilters[key] = [];
+          this.tempFilters[key] = [];
+          if (col.paramskeyId) {
+            this.selectedFilterOptions[col.paramskeyId] = [];
+          }
+        }
+        if (!(totalRecord > 0 && excluded.length >= totalRecord) && excluded.length > 0) {
           this.columnSelectAll[key] = false;
           // Remove sentinel so 'Select All' shows unchecked (matches generic-table-filter behaviour)
           this.columnFilters[key] = realNewSelected;
@@ -1500,6 +1516,20 @@ export class DynamicTableComponent implements OnInit, OnChanges, DoCheck, AfterV
         );
 
         this.columnExcludedIds[key] = finalExcluded;
+        const totalRecord = this.columnTotalCount[key] || col.totalCount || (col.filterOptions || []).length;
+
+        if (totalRecord > 0 && finalExcluded.length >= totalRecord) {
+          this.columnSelectAll[key] = null;
+          this.columnExcludedIds[key] = [];
+          this.columnSelectedCount[key] = 0;
+          this.columnTotalCount[key] = 0;
+          this.selectedItemsMap[key] = [];
+          this.columnFilters[key] = [];
+          this.tempFilters[key] = [];
+          if (col.paramskeyId) {
+            this.selectedFilterOptions[col.paramskeyId] = [];
+          }
+        }
 
         if (finalExcluded.length === 0) {
           this.columnSelectAll[key] = true;
@@ -1800,6 +1830,10 @@ export class DynamicTableComponent implements OnInit, OnChanges, DoCheck, AfterV
       setTimeout(() => {
         this.columnFilters[key] = [];
         this.tempFilters[key] = [];
+        // running the function because when there is one data and we select that data and then select all then also the include jobs should work
+        if (this.config.showIncludeAllJobs && key === 'client_name') {
+          this.isIncludeFlagEnableLogic();
+        }
       });
     } else {
       // false → true OR null → true: Select all — clear excludedIds, select everything
@@ -1815,6 +1849,10 @@ export class DynamicTableComponent implements OnInit, OnChanges, DoCheck, AfterV
       this.columnSelectedCount[key] = total;
       // Sync selectedFilterOptions so onSelectionChange's hasChanged guard does not override columnSelectAll
       if (col.paramskeyId) { this.selectedFilterOptions[col.paramskeyId] = allIdsWithSentinel; }
+        // running the function because when there is one data and we select that data and then select all then also the include jobs should work
+      if (this.config.showIncludeAllJobs && key === 'client_name') {
+        this.isIncludeFlagEnableLogic();
+      }
     }
     if (col?.filterOptions) {
       // selectAll true  → selectedOptions = [], excludedIds = [], selectedCount = totalCount

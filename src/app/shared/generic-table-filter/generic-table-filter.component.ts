@@ -251,6 +251,13 @@ export class GenericTableFilterComponent implements OnInit, OnChanges {
         // Uncheck: change selectAll to false and add to excludedIds
         this.selectAllValue = false;
         this.excludedIds.push({ id: option.id, name: option.name });
+
+        // exclude ids issue: if all items become excluded, treat it as no selection.
+        if (this.excludedIds.length >= this.totalCount && this.totalCount > 0) {
+          this.selectAllValue = null;
+          this.selectedOptions = [];
+          this.excludedIds = [];
+        }
       }
     } else if (this.selectAllValue === false) {
       // When selectAll is false (came from true), items are implicitly selected if not in excludedIds

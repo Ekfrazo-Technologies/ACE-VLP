@@ -485,6 +485,9 @@ export class CreateUpdateEmployeeComponent implements CanComponentDeactivate, On
       this.formErrorScrollService.scrollToFirstError(this.employeeFormGroup);
     } else {
       this.employeeFormGroup.patchValue({ date_joined: this.datePipe.transform(this.employeeFormGroup?.get('date_joined')?.value, 'yyyy-MM-dd') })
+      if(this.employeeFormGroup?.get('exit_date')?.value){
+        this.employeeFormGroup.patchValue({ exit_date: this.datePipe.transform(this.employeeFormGroup?.get('exit_date')?.value, 'yyyy-MM-dd') })
+      }
       if(this.filteredLeaves.length>0) {
       this.employeeFormGroup.get('enable_leave')?.patchValue({
       leave_type_id: this.filteredLeaves[0]['leave_type_id'] || '',

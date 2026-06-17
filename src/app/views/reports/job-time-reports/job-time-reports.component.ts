@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { tableColumns } from '../job-time-reports/job-time-reprots-config'
 import { CommonServiceService } from '../../../service/common-service.service';
 import { ApiserviceService } from '../../../service/apiservice.service';
@@ -7,12 +7,15 @@ import { environment } from '../../../../environments/environment';
 import { JobTimeSheetDetailsPopupComponent } from '../common/job-time-sheet-details-popup/job-time-sheet-details-popup.component';
 import { MatDialog } from '@angular/material/dialog';
 import { FilterQueryService } from '../../../service/filter-query.service';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 @Component({
   selector: 'app-job-time-reports',
   templateUrl: './job-time-reports.component.html',
   styleUrls: ['./job-time-reports.component.scss']
 })
-export class JobTimeReportsComponent implements OnInit {
+export class JobTimeReportsComponent implements OnInit, OnDestroy {
+  private destroy$ = new Subject<void>();
   BreadCrumbsTitle: any = 'Job Time Report';
   term: string = '';
   tableSize: number = 50;
@@ -71,8 +74,13 @@ export class JobTimeReportsComponent implements OnInit {
     }, 500);
   }
 
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
   getJobStatusList() {
-    this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).subscribe(
+    this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).pipe(takeUntil(this.destroy$)).subscribe(
       (resData: any) => {
         if (resData) {
           this.allJobStatus = resData;
@@ -121,7 +129,7 @@ export class JobTimeReportsComponent implements OnInit {
   }
 
   // Called from <app-dynamic-table> via @Output actionEvent
-  handleAction(event: { actionType: string; detail: any,key:string, fromFilter?: boolean  }) {
+  handleAction(event: { actionType: string; detail: any; key: string; fromFilter?: boolean; action?: any; client_id?: any; row?: any }) {
     switch (event.actionType) {
       case 'navigate_employee':
         this.viewtimesheetDetails(event);
@@ -148,7 +156,7 @@ export class JobTimeReportsComponent implements OnInit {
         this.onSorting(event);
         break;
       case 'headerTabs':
-        this.tabStatus = event['action'];
+        this.tabStatus = event.action;
         this.page = 1;
         this.tableSize = 50;
          this.client_id = null;
@@ -173,9 +181,9 @@ export class JobTimeReportsComponent implements OnInit {
         this.onApplyFilter(event.detail, event.key);
         break;
       case 'includeAllJobs':
-        this.isIncludeAllJobValue = event['action'];
-        this.client_id = event['action'] && event['client_id'] ? event['client_id'] : null;
-        this.isIncludeAllJobEnable = event['action'] || (!event['action'] && event['client_id']) ? false : true;
+        this.isIncludeAllJobValue = event.action;
+        this.client_id = event.action && event.client_id ? event.client_id : null;
+        this.isIncludeAllJobEnable = event.action || (!event.action && event.client_id) ? false : true;
         this.page = 1;
         this.filterDataCache = {};
         this.selectedJobIds = [];
@@ -195,7 +203,7 @@ export class JobTimeReportsComponent implements OnInit {
         });
         break;
       case 'sendEmail':
-        this.client_id = event['client_id'] ? event['client_id'] : null;
+        this.client_id = event.client_id ? event.client_id : null;
         this.sendEamils();
         break;
       default:
@@ -243,7 +251,7 @@ export class JobTimeReportsComponent implements OnInit {
         && filteredData?.includeAlljobsids?.length === 1) {
        this.client_id = filteredData.includeAlljobsids[0];
       this.isIncludeAllJobEnable = false;
-    }else{
+    } else if (count !== 1) {
       this.client_id = null;
     }
     }
@@ -317,7 +325,7 @@ private buildQueryForFilter(filterValue: any, paramName: string): string {
     // New format: FilterState object
     return this.filterQueryService.buildFilterSegment(filterValue, paramName);
   }
-  exportCsvOrPdf(fileType: any) {
+  exportCsvOrPdf(fileType: string) {
     const search = this.term?.trim().length >= 2 ? `search=${encodeURIComponent(this.term.trim())}&` : '';
     let query = `?${search}job-status=[${this.statusList}]&report-type=job-time-report&non-productive-jobs=false&file-type=${fileType}&download=true`
     query += this.client_id ? `&client=${this.client_id}` : '';
@@ -383,7 +391,7 @@ private buildQueryForFilter(filterValue: any, paramName: string): string {
     finalQuery += `&job-status=[${this.statusList}]`;
     // Yet to integrate
     if (this.client_id) {
-      this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).subscribe((respData: any) => {
+      this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).pipe(takeUntil(this.destroy$)).subscribe((respData: any) => {
         if (respData) {
           this.api.showSuccess(respData['message']);
         }
@@ -424,8 +432,7 @@ private buildQueryForFilter(filterValue: any, paramName: string): string {
         : col
     );
   }
-  async getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string; client_ids?: any[]; job_ids?: any[]; job_status?: any[]; prime_emp?: any }) {
-    console.log(params);
+  getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string; client_ids?: any[]; job_ids?: any[]; job_status?: any[]; prime_emp?: any }) {
     let finalQuery;
     this.formattedData = [];
     const page = params?.page ?? this.page;
@@ -459,6 +466,7 @@ private buildQueryForFilter(filterValue: any, paramName: string): string {
     } else if ((this.userRole !='Manager' && this.userRole !='Admin') && !(this.client_id && this.isIncludeAllJobValue)){
       finalQuery += `&employee-id=${this.user_id}`;
     }
+    console.log(this.client_id, this.isIncludeAllJobValue);
     finalQuery += (this.client_id && this.isIncludeAllJobValue) ? `&client=${this.client_id}` : '';
     finalQuery += this.buildQueryForFilter(params?.prime_emp, 'employee');
     finalQuery += this.buildQueryForFilter(params?.client_ids, 'client');
@@ -467,7 +475,7 @@ private buildQueryForFilter(filterValue: any, paramName: string): string {
      if (this.directionValue && this.sortValue) {
       finalQuery += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`;
     }
-    await this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).subscribe((res: any) => {
+    this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).pipe(takeUntil(this.destroy$)).subscribe((res: any) => {
       if (res.results) {
         this.formattedData = res.results?.map((item: any, i: number) => ({
           sl: (page - 1) * pageSize + i + 1,
@@ -629,6 +637,7 @@ private buildQueryForFilter(filterValue: any, paramName: string): string {
     }
 
     this.api.getData(`${environment.live_url}/${endpoint}/${query}`)
+      .pipe(takeUntil(this.destroy$))
       .subscribe((res: any) => {
         if (!res) return;
 
