@@ -15,176 +15,171 @@ import { DatePipe } from '@angular/common';
   styleUrls: ['./employee-details.component.scss']
 })
 export class EmployeeDetailsComponent implements OnInit {
- term: string = '';
-   tableSize: number = 50;
-   page: any = 1;
-   tableSizes = [50,100,200];
-   tableConfig:any = {
-     columns: [],
-     data: [],
-     searchTerm: '',
-     actions: [],
-     accessConfig: [],
-     tableSize: 50,
-     pagination: true,
-   };
-   userRole: string;
-   user_role_name: string;
-   user_id: string;
-   sortValue: string = '';
+  term: string = '';
+  tableSize: number = 50;
+  page: any = 1;
+  tableSizes = [50, 100, 200];
+  tableConfig: any = {
+    columns: [],
+    data: [],
+    searchTerm: '',
+    actions: [],
+    accessConfig: [],
+    tableSize: 50,
+    pagination: true,
+  };
+  userRole: string;
+  user_role_name: string;
+  user_id: string;
+  sortValue: string = '';
   directionValue: string = '';
-   tableData: ({ label: string; key: string; sortable: boolean; filterable?: undefined; filterType?: undefined; } | { label: string; key: string; sortable: boolean; filterable: boolean; filterType: string; })[];
-   constructor(
-     private common_service:CommonServiceService,
-     private api:ApiserviceService,
-      public dialogRef: MatDialogRef<EmployeeDetailsComponent>,
-           @Inject(MAT_DIALOG_DATA) public data: any,
-      // private datePipe:DatePipe
-   ) {
-     this.user_id = sessionStorage.getItem('user_id') || '' ;
-     this.user_role_name = sessionStorage.getItem('user_role_name') || '';
-   }
+  tableData: ({ label: string; key: string; sortable: boolean; filterable?: undefined; filterType?: undefined; } | { label: string; key: string; sortable: boolean; filterable: boolean; filterType: string; })[];
+  constructor(
+    private common_service: CommonServiceService,
+    private api: ApiserviceService,
+    public dialogRef: MatDialogRef<EmployeeDetailsComponent>,
+    @Inject(MAT_DIALOG_DATA) public data: any,
+    // private datePipe:DatePipe
+  ) {
+    this.user_id = sessionStorage.getItem('user_id') || '';
+    this.user_role_name = sessionStorage.getItem('user_role_name') || '';
+  }
 
-   async ngOnInit() {
-     this.tableData = getTableColumns(this.user_role_name)
-     this.getTableData()
-   }
+  async ngOnInit() {
+    this.tableData = getTableColumns(this.user_role_name)
+    this.getTableData()
+  }
 
 
- onTableDataChange(event: any) {
-   const page = event;
-   this.page = page;
+  onTableDataChange(event: any) {
+    const page = event;
+    this.page = page;
 
-   this.getTableData({
-     page: page,
-     pageSize: this.tableSize,
-     searchTerm: this.term
-   });
- }
- // Called when user changes page size from the dynamic table
- onTableSizeChange(event: any): void {
-   if(event){
-     const newSize = Number(event.value || event);
-     this.tableSize = newSize;
-     this.page = 1; // reset to first page
-     this.getTableData({
-       page: this.page,
-       pageSize: this.tableSize,
-       searchTerm: this.term
-     });
-   }
+    this.getTableData({
+      page: page,
+      pageSize: this.tableSize,
+      searchTerm: this.term
+    });
+  }
+  // Called when user changes page size from the dynamic table
+  onTableSizeChange(event: any): void {
+    if (event) {
+      const newSize = Number(event.value || event);
+      this.tableSize = newSize;
+      this.page = 1; // reset to first page
+      this.getTableData({
+        page: this.page,
+        pageSize: this.tableSize,
+        searchTerm: this.term
+      });
+    }
 
- }
+  }
 
- // Called from <app-dynamic-table> via @Output actionEvent
- handleAction(event: { actionType: string; detail: any }) {
-   switch (event.actionType) {
-     case 'tableDataChange':
-       this.onTableDataChange(event.detail);
-       break;
-       case 'tableSizeChange':
-       this.onTableSizeChange(event.detail);
-       break;
-       case 'search':
-       this.onSearch(event.detail);
-       break;
-       case 'export_csv':
-       this.exportCsvOrPdf(event.detail);
-       break;
-       case 'sorting':
+  // Called from <app-dynamic-table> via @Output actionEvent
+  handleAction(event: { actionType: string; detail: any }) {
+    switch (event.actionType) {
+      case 'tableDataChange':
+        this.onTableDataChange(event.detail);
+        break;
+      case 'tableSizeChange':
+        this.onTableSizeChange(event.detail);
+        break;
+      case 'search':
+        this.onSearch(event.detail);
+        break;
+      case 'export_csv':
+        this.exportCsvOrPdf(event.detail);
+        break;
+      case 'sorting':
         this.onSorting(event);
-      break;
-       case 'export_pdf':
-       this.exportCsvOrPdf(event.detail);
-       break;
-     default:
-       this.getTableData({
-         page: 1,
-         pageSize: this.tableSize,
-         searchTerm: this.term
-       });
-   }
- }
+        break;
+      case 'export_pdf':
+        this.exportCsvOrPdf(event.detail);
+        break;
+      default:
+        this.getTableData({
+          page: 1,
+          pageSize: this.tableSize,
+          searchTerm: this.term
+        });
+    }
+  }
 
- onSorting(data){
-  this.directionValue = data.detail.directionValue;
-  this.sortValue = data.detail.sortValue;
-  this.getTableData({
-     page: this.page,
-     pageSize: this.tableSize,
-     searchTerm: this.term
-   });
- }
- exportCsvOrPdf(fileType) {
-   const search = this.term?.trim().length >= 2? `search=${encodeURIComponent(this.term.trim())}&`: '';
+  onSorting(data) {
+    this.directionValue = data.detail.directionValue;
+    this.sortValue = data.detail.sortValue;
+    this.getTableData({
+      page: this.page,
+      pageSize: this.tableSize,
+      searchTerm: this.term
+    });
+  }
+  exportCsvOrPdf(fileType) {
+    const search = this.term?.trim().length >= 2 ? `search=${encodeURIComponent(this.term.trim())}&` : '';
     let query = `?${search}download=true`
-    if(this.user_role_name !== 'Admin'){
-      query +=`&employee-id=${this.user_id}`
-      }
-    query +=`&timesheet-employee=${this.data?.employee.keyId}&timesheet-as-per-date=${this.data.selectedDay}`
-    if(this.directionValue && this.sortValue){
-        query += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`;
-      }
-      const url = `${environment.live_url}/${environment.vlp_timesheets}/${query}&file-type=${fileType}`
-      window.open(url, '_blank');
-      //  const url = `${environment.live_url}/${environment.vlp_timesheets}/${query}&file-type=${fileType}&timsheet-type=detailed`;
-  //  downloadFileFromUrl({
-  //    url,
-  //    fileName: 'timesheet_details',
-  //    fileType
-  //  });
- }
+    if (this.user_role_name !== 'Admin') {
+      query += `&employee-id=${this.user_id}`
+    }
+    query += `&timesheet-employee=${this.data?.employee.keyId}&timesheet-as-per-date=${this.data.selectedDay}`
+    if (this.directionValue && this.sortValue) {
+      query += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`;
+    }
+    const url = `${environment.live_url}/${environment.vlp_timesheets}/${query}&file-type=${fileType}`
+    window.open(url, '_blank');
+    
+  }
 
- // Fetch table data from API with given params
- async getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string, startDate?:string ; endDate?:string }) {
-   const page = params?.page ?? this.page;
-   const pageSize = params?.pageSize ?? this.tableSize;
-   const searchTerm = params?.searchTerm ?? this.term;
-   let query = buildPaginationQuery({ page, pageSize, searchTerm });
-   if(this.user_role_name !== 'Admin'){
-     query +=`&employee-id=${this.user_id}`
-     }
-    query +=`&timesheet-employee=${this.data?.employee.keyId}&timesheet-as-per-date=${this.data.selectedDay}`
-    if(this.directionValue && this.sortValue){
-        query += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`;
-      }
-   this.api.getData(`${environment.live_url}/${environment.vlp_timesheets}/${query}`).subscribe(async (res: any) => {
-     const formattedData = res.results.map((item: any, i: number) => ({
-       sl: (page - 1) * pageSize + i + 1,
-       ...item
-     }));
-     const noOfPages: number = res?.total_pages
-     this.tableConfig = {
-       columns:  this.tableData?.map(col => ({
-         ...col,
-         filterOptions: col.filterable ? getUniqueValues(formattedData, col.key) : []
-       })),
+  // Fetch table data from API with given params
+  async getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string, startDate?: string; endDate?: string }) {
+    const page = params?.page ?? this.page;
+    const pageSize = params?.pageSize ?? this.tableSize;
+    const searchTerm = params?.searchTerm ?? this.term;
+    let query = buildPaginationQuery({ page, pageSize, searchTerm });
+    if (this.user_role_name !== 'Admin') {
+      query += `&employee-id=${this.user_id}`
+    }
+    query += `&timesheet-employee=${this.data?.employee.keyId}&timesheet-as-per-date=${this.data.selectedDay}`
+    if (this.directionValue && this.sortValue) {
+      query += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`;
+    }
+    this.api.getData(`${environment.live_url}/${environment.vlp_timesheets}/${query}`).subscribe(async (res: any) => {
+      const formattedData = res.results.map((item: any, i: number) => ({
+        sl: (page - 1) * pageSize + i + 1,
+        ...item
+      }));
+      const noOfPages: number = res?.total_pages
+      this.tableConfig = {
+        columns: this.tableData?.map(col => ({
+          ...col,
+          filterOptions: col.filterable ? getUniqueValues(formattedData, col.key) : []
+        })),
 
-       data: formattedData ? formattedData : [],
-       searchTerm: this.term,
-       actions: [],
-       accessConfig: [],
-       tableSize: pageSize,
-       pagination: true,
-       searchable: true,
-       currentPage:page,
-       showDownload:true,
-       showCsv:true,
-       showPdf:true,
-       totalRecords : noOfPages * this.tableSize,
-      //  totalRecords: res.total_no_of_record,
-       searchPlaceholder:'Search by Employee',
-     };
-   });
- }
- 
-   onSearch(term: string): void {
-     this.term = term;
-     this.getTableData({
-       page: 1,
-       pageSize: this.tableSize,
-       searchTerm: term
-     });
-   }
+        data: formattedData ? formattedData : [],
+        searchTerm: this.term,
+        actions: [],
+        accessConfig: [],
+        tableSize: pageSize,
+        pagination: true,
+        searchable: true,
+        currentPage: page,
+        showDownload: true,
+        showCsv: true,
+        showPdf: true,
+        totalRecords: noOfPages * this.tableSize,
+        //  totalRecords: res.total_no_of_record,
+        searchPlaceholder: 'Search by Employee',
+      };
+    });
+  }
+
+  onSearch(term: string): void {
+    this.term = term;
+    this.getTableData({
+      page: 1,
+      pageSize: this.tableSize,
+      searchTerm: term
+    });
+  }
 
 }

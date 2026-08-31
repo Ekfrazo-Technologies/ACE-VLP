@@ -710,7 +710,8 @@ onManagerSelectOpened(opened: boolean, index: number): void {
 
   generateYearList() {
     const start = 2018;
-    const end = new Date().getFullYear();
+    const currentYear = new Date().getFullYear();
+    const end = this.modeName === 'Yearly' ? currentYear + 1 : currentYear;
     this.yearList = [];
     for (let y = start; y <= end; y++) {
       this.yearList.push(y);
@@ -723,6 +724,7 @@ onManagerSelectOpened(opened: boolean, index: number): void {
     const peroidicityId = event.value;
     this.jobFormGroup.get('period')?.reset(null, { emitEvent: false });
     this.modeName = this.allPeroidicitylist.find((peroidicity: any) => peroidicity.id === peroidicityId)?.periodicty_name;
+    this.generateYearList();
     this.yearDefault =new Date()?.getFullYear();
     this.year = new Date()?.getFullYear();
     this.checkthePerodicityName()
@@ -913,6 +915,7 @@ onManagerSelectOpened(opened: boolean, index: number): void {
           this.selectAllEmpFlag = respData?.all_employees,
           this.getAllEmployeeList();
         this.modeName = this.allPeroidicitylist.find((peroidicity: any) => peroidicity.id === Number(respData?.periodicity))?.periodicty_name;
+        this.generateYearList();
         this.checkthePerodicityName()
         let service_name = this.getSelectedService(respData?.service);
          this.serviceName = service_name.toLowerCase()

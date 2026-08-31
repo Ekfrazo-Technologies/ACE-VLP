@@ -37,6 +37,10 @@ export class QuarterMonthYearPickerComponent implements OnInit,OnChanges {
 
   constructor(private cdr: ChangeDetectorRef) {}
   ngOnChanges(changes: SimpleChanges): void {
+  if (changes['mode']) {
+    this.generateYearList();
+  }
+
   if (changes['resetOnPeriodicityChange']?.currentValue === true) {
     this.resetInternalState();
   }
@@ -262,7 +266,8 @@ export class QuarterMonthYearPickerComponent implements OnInit,OnChanges {
 
    generateYearList() {
     const start = 2018;
-    const end = new Date().getFullYear();
+    const currentYear = new Date().getFullYear();
+    const end = this.mode === 'Yearly' ? currentYear + 1 : currentYear;
     this.yearList = [];
     for (let y = start; y <= end; y++) {
       this.yearList.push(y);
