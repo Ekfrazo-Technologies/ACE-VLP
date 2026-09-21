@@ -150,15 +150,17 @@ export class TimesheetSummaryReportComponent implements OnInit, OnDestroy {
   }
 
   private buildEmployeeFilterQuery(employeeFilter: any): string {
+    const nonAdminScope = this.user_role_name !== 'Admin' && this.user_id != null
+      ? `&employee-id=${this.user_id}&timesheet-report-type=detailed`
+      : '';
+
     // Check if it's the new FilterState format (object with selectAllValue)
     if (employeeFilter && !Array.isArray(employeeFilter) && employeeFilter.selectAllValue !== undefined) {
       // New FilterState format — use buildQueryForFilter
       const segment = this.buildQueryForFilter(employeeFilter, 'employee');
-      if (segment) return segment;
+      if (segment) return `${segment}${nonAdminScope}`;
       // If FilterState produced nothing (null selectAll, no selections), fall back to non-admin default
-      if (this.user_role_name !== 'Admin' && this.user_id != null) {
-        return `&employee-id=${this.user_id}&timesheet-report-type=detailed`;
-      }
+      if (nonAdminScope) return nonAdminScope;
       return '';
     }
 
@@ -169,12 +171,10 @@ export class TimesheetSummaryReportComponent implements OnInit, OnDestroy {
         const idsForQuery = new Set<string>();
         currentSelectedIds.forEach((id: any) => { if (id != null) idsForQuery.add(String(id)); });
         if (idsForQuery.size > 0) {
-          return `&employee-ids=[${Array.from(idsForQuery).join(',')}]`;
+          return `&employee-ids=[${Array.from(idsForQuery).join(',')}]${nonAdminScope}`;
         }
       }
-      if (this.user_id != null) {
-        return `&employee-id=${this.user_id}&timesheet-report-type=detailed`;
-      }
+      if (nonAdminScope) return nonAdminScope;
       return '';
     } else {
       if (currentSelectedIds.length > 0) {
