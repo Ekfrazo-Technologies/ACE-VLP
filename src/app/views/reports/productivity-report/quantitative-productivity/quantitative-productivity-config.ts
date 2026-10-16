@@ -54,6 +54,5 @@ export const tableColumns = [
     label: 'TES',
     key: 'tes',
     sortable: false,
-    leftAlign:true
   },
   ]
