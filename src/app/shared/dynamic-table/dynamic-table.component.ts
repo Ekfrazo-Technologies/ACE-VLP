@@ -1,15 +1,19 @@
 // dynamic-table.component.ts
 import {
+  AfterViewInit,
   ChangeDetectorRef,
   Component,
+  DoCheck,
   ElementRef,
   EventEmitter,
   Input,
   OnChanges,
+  OnDestroy,
   OnInit,
   Output,
   QueryList,
   SimpleChanges,
+  ViewChild,
   ViewChildren,
   ViewContainerRef,
 } from '@angular/core';
@@ -18,7 +22,7 @@ import { DatePipe } from '@angular/common';
 import { DynamicTableConfig } from './dynamic-table-config.model';
 import { ApiserviceService } from '../../service/apiservice.service';
 import { environment } from '../../../environments/environment';
-import { FormArray, FormBuilder, FormGroup } from '@angular/forms';
+import { FormArray, FormBuilder, FormControl, FormGroup } from '@angular/forms';
 import { fileToBase64, urlToFile } from '../fileUtils.utils';
 import { OverlayRef } from '@angular/cdk/overlay';
 import { NgbDropdownConfig } from '@ng-bootstrap/ng-bootstrap';
@@ -26,13 +30,15 @@ import { MAT_DATE_RANGE_SELECTION_STRATEGY } from '@angular/material/datepicker'
 import { WeeklySelectionStrategy } from '../weekly-selection-strategy';
 import { Subject } from 'rxjs';
 import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
+import { MatAutocomplete, MatAutocompleteTrigger } from '@angular/material/autocomplete';
+import { MatAutocompleteService } from '../../service/mat-autocomplete.service';
 @Component({
   selector: 'app-dynamic-table',
   templateUrl: './dynamic-table.component.html',
   styleUrls: ['./dynamic-table.component.scss'],
   providers: [NgbDropdownConfig],
 })
-export class DynamicTableComponent implements OnInit, OnChanges {
+export class DynamicTableComponent implements OnInit, OnChanges, DoCheck, AfterViewInit, OnDestroy {
   @Output() filterOpened = new EventEmitter<any>(); // new
   @Output() filterScrolled = new EventEmitter<any>(); //new
   @Output() filterEvent = new EventEmitter<{ detail: any; key: string }>();
@@ -50,10 +56,13 @@ export class DynamicTableComponent implements OnInit, OnChanges {
   paginationId = 'pagination-' + Math.random();
   filteredData: any[] = [];
   paginatedData: any[] = [];
+  currentReferenceDate: Date = new Date();
+  monday: Date;
+  sunday: Date;
   columnStartDates: { [key: string]: any } = {};
   columnEndDates: { [key: string]: any } = {};
-  startDate;
-  endDate;
+  startDate:any;
+  endDate:any;
   mainStartDate: any;
   mainEndDate: any;
   currentPage = 1;
@@ -61,7 +70,7 @@ export class DynamicTableComponent implements OnInit, OnChanges {
   columnFilters: { [key: string]: any } = {};
   arrowState: { [sortKey: string]: boolean } = {};
   sortValue: string = '';
-  directionValue: string;
+  directionValue: any = '';
   filterSearchText: { [key: string]: string } = {};
   tableSize: number = 50;
   activeDateColumn: string | null = null;
@@ -97,16 +106,48 @@ export class DynamicTableComponent implements OnInit, OnChanges {
   dateRangeStartDate: string | null;
   is_leaveTypes: boolean;
   is_employeeDropdown: boolean = false;
+
+  // ─── Autocomplete Properties ─────────────────────────────────────────────────
+  private destroy$ = new Subject<void>();
+  employeeDisplayControl = new FormControl('');
+  displayEmployeeFn: (item: any) => string;
+  @ViewChild('employeeAuto') employeeAutoRef!: MatAutocomplete;
+  @ViewChild('empInput', { read: MatAutocompleteTrigger }) employeeTriggerRef!: MatAutocompleteTrigger;
+  private justSelectedEmployee = false;
+
+  leaveTypeDisplayControl = new FormControl('');
+  displayLeaveTypeFn: (item: any) => string;
+  filteredLeaveTypesAuto: any[] = [];
+  @ViewChild('leaveInput', { read: MatAutocompleteTrigger }) leaveTypeTriggerRef!: MatAutocompleteTrigger;
+  private justSelectedLeaveType = false;
+  // select all logic
+  selectAllValue: boolean | null = null;
+  excludedIds: { id: any, name: string }[] = [];
+  selectedCount: number = 0;
+  totalCount: number = 0;
+  // per-column select-all state (new)
+  columnSelectAll: { [key: string]: boolean | null } = {};
+  columnExcludedIds: { [key: string]: { id: any, name: string }[] } = {};
+  columnSelectedCount: { [key: string]: number } = {};
+  columnTotalCount: { [key: string]: number } = {};
+  // Tracks first-item id + length of filterOptions per column — detects search resets (same length, different data)
+  private prevFilterOptionsLengths: { [key: string]: string } = {};
+  // Keys currently being updated programmatically by ngDoCheck — suppresses the phantom
+  // onSelectionChange that mat-selection-list fires when *ngFor destroys old mat-list-options
+  private _programmaticUpdateKeys = new Set<string>();
   constructor(
     private fb: FormBuilder,
     private datePipe: DatePipe,
     private api: ApiserviceService,
     private ngbConfig: NgbDropdownConfig,
-    private cdr: ChangeDetectorRef
+    private cdr: ChangeDetectorRef,
+    private autoSvc: MatAutocompleteService
   ) {
     this.ngbConfig.autoClose = 'outside'; // Changed from false to 'outside'
     this.user_id = sessionStorage.getItem('user_id');
     this.userRole = sessionStorage.getItem('user_role_name');
+    this.displayEmployeeFn = this.autoSvc.createDisplayFn('user__full_name');
+    this.displayLeaveTypeFn = this.autoSvc.createDisplayFn('leave_type_name');
   }
   tempFilters: { [key: string]: any[] } = {};
   searchSubject = new Subject<string>();
@@ -121,6 +162,74 @@ export class DynamicTableComponent implements OnInit, OnChanges {
         this.actionEvent.emit({ actionType: 'search', detail: value });
         this.applyFilters();
       });
+
+    // Setup paginated search for employee autocomplete
+    this.autoSvc.setupPaginatedSearch(
+      this.employeeDisplayControl,
+      (value: string) => this.onSearchDropdown('employee', value),
+      this.destroy$
+    );
+
+    // Setup local filter for leave type autocomplete
+    this.autoSvc.setupLocalFilter(
+      this.leaveTypeDisplayControl,
+      () => this.leaveTypes,
+      (filtered: any[]) => { this.filteredLeaveTypesAuto = filtered; },
+      'leave_type_name',
+      this.destroy$
+    );
+  }
+
+  ngAfterViewInit(): void {
+    if (this.employeeAutoRef) {
+      this.autoSvc.setupScrollListener(
+        this.employeeAutoRef,
+        this.dropdownState['employee'],
+        () => this.fetchData('employee', true),
+        this.destroy$
+      );
+    }
+  }
+
+  // Auto-selects newly scroll-loaded or search-returned items when columnSelectAll is true OR false (exclude mode).
+  // Runs on every change detection cycle; guard conditions make it cheap.
+  // Uses first-id + length as change key to detect both scroll appends AND search resets.
+  ngDoCheck(): void {
+    if (!this.config?.columns) return;
+    this.config.columns.forEach((col: any) => {
+      if (col.filterType !== 'multi-select') return;
+      const selectAllState = this.columnSelectAll[col.key];
+      // Only auto-select when true (all selected) or false (exclude mode); null = individual picks, no auto-select
+      if (selectAllState !== true && selectAllState !== false) return;
+      const opts = col.filterOptions || [];
+      // Use first-item id + length as a cheap change key — detects search resets (same length, different data)
+      const changeKey = `${opts.length}:${opts[0]?.id ?? ''}`;
+      const prevKey = this.prevFilterOptionsLengths[col.key] || '';
+      if (changeKey === prevKey) return;
+      this.prevFilterOptionsLengths[col.key] = changeKey;
+      const excluded = (this.columnExcludedIds[col.key] || []).map((e: any) => e.id);
+      const allIds = opts.map((o: any) => o.id).filter((id: any) => !excluded.includes(id));
+      // Also include IDs from selectedItemsMap (items selected on previous pages/searches)
+      // so they stay checked when getFilteredOptions pins them at the top of the dropdown
+      const storedIds = (this.selectedItemsMap[col.key] || [])
+        .map((o: any) => o.id)
+        .filter((id: any) => !excluded.includes(id));
+      const combinedIds = [...new Set([...allIds, ...storedIds])];
+      // Include sentinel only when selectAll is true (so 'Select All' checkbox stays checked)
+      // When false (exclude mode), no sentinel — 'Select All' stays unchecked
+      const modelIds = selectAllState === true ? ['__select_all__', ...combinedIds] : combinedIds;
+      // No suppress needed: (selectionChange) only fires on real user clicks, not programmatic updates
+      this.columnFilters[col.key] = modelIds;
+      this.tempFilters[col.key] = modelIds;
+      if (col.paramskeyId) { this.selectedFilterOptions[col.paramskeyId] = modelIds; }
+      // Always take the LARGER of stored vs incoming totalCount.
+      // - Search while selectAll=true: col.totalCount shrinks (e.g. 5) — keep stored (100)
+      // - Clear search: col.totalCount returns to full (100) — update from stored search total (5)
+      const incomingTotal = col.totalCount || allIds.length;
+      this.columnTotalCount[col.key] = Math.max(this.columnTotalCount[col.key] || 0, incomingTotal);
+      const total = this.columnTotalCount[col.key];
+      this.columnSelectedCount[col.key] = total - excluded.length;
+    });
   }
 
   getEmployeesList(reset: boolean) {
@@ -142,10 +251,14 @@ export class DynamicTableComponent implements OnInit, OnChanges {
           if (reset && this.userRole === 'Manager') {
             this.selectedDropdownItems['employee'] = [];
             this.selectedEmployeeId = undefined;
+            this.employeeDisplayControl.setValue('');
+            this.dropdownState['employee'].initialized = false;
             this.cdr.detectChanges();
           } else {
             this.updateSelectedItems('employee', respData?.results[0].user_id);
             this.selectedEmployeeId = respData?.results[0].user_id;
+            this.selectedDropdownItems['employee'] = [respData?.results[0]];
+            this.employeeDisplayControl.setValue(respData?.results[0]);
           }
           
           this.actionEvent.emit({
@@ -169,10 +282,12 @@ export class DynamicTableComponent implements OnInit, OnChanges {
       .subscribe(
         (respData: any) => {
           this.leaveTypes = respData;
+          this.filteredLeaveTypesAuto = [...this.leaveTypes];
           if (this.leaveTypes?.length > 0) {
             // this.selectedLeaveType = this.leaveTypes[0].id;
             // this.actionEvent.emit({ actionType: 'leaveType', detail: {leave_type:this.selectedLeaveType,reset:false,user_id:this.user_id}});
             this.selectedLeaveType = this.leaveTypes[0].id;
+            this.leaveTypeDisplayControl.setValue(this.leaveTypes[0]);
             if (this.is_employeeDropdown && this.is_leaveTypes) {
               this.getEmployeesList(false);
             } else {
@@ -229,6 +344,8 @@ export class DynamicTableComponent implements OnInit, OnChanges {
   }
 
   private initializeTable(): void {
+    // Reset scroll tracking so ngDoCheck picks up new filterOption lengths after config reload
+    this.prevFilterOptionsLengths = {};
     if (this.config.data && this.config.data?.length > 0) {
       this.filteredData = this.config.data;
     } else {
@@ -244,6 +361,31 @@ export class DynamicTableComponent implements OnInit, OnChanges {
         this.arrowState[col.sortKey] = false;
       }
       //this.columnFilters[col.key] = col.filterType === 'multi-select' ? [] : '';
+
+      // When select-all is true OR false (exclude mode), auto-select newly loaded items
+      // (mirrors generic-table-filter's isSelected() behavior for [(ngModel)]-based lists)
+      if (col.filterType === 'multi-select' &&
+          (this.columnSelectAll[col.key] === true || this.columnSelectAll[col.key] === false)) {
+        const selectAllState = this.columnSelectAll[col.key];
+        const excluded = (this.columnExcludedIds[col.key] || []).map((e: any) => e.id);
+        const allIds = (col.filterOptions || []).map((o: any) => o.id).filter((id: any) => !excluded.includes(id));
+        // Also include IDs from selectedItemsMap (items selected on previous pages/searches)
+        const storedIds = (this.selectedItemsMap[col.key] || [])
+          .map((o: any) => o.id)
+          .filter((id: any) => !excluded.includes(id));
+        const combinedIds = [...new Set([...allIds, ...storedIds])];
+        // Include sentinel only when true; when false (exclude mode) no sentinel
+        const modelIds = selectAllState === true ? ['__select_all__', ...combinedIds] : combinedIds;
+        this.columnFilters[col.key] = modelIds;
+        this.tempFilters[col.key] = modelIds;
+        // Sync selectedFilterOptions so onSelectionChange's hasChanged guard does not re-trigger
+        if (col.paramskeyId) { this.selectedFilterOptions[col.paramskeyId] = modelIds; }
+        // Always take the LARGER of stored vs incoming totalCount (same logic as ngDoCheck)
+        const incomingTotal = col.totalCount || allIds.length;
+        this.columnTotalCount[col.key] = Math.max(this.columnTotalCount[col.key] || 0, incomingTotal);
+        const total = this.columnTotalCount[col.key];
+        this.columnSelectedCount[col.key] = total - (this.columnExcludedIds[col.key]?.length || 0);
+      }
     });
     if (this.config.formContent && this.config.data) {
       this.isEditBtn = false;
@@ -415,11 +557,21 @@ export class DynamicTableComponent implements OnInit, OnChanges {
         this.cdr.detectChanges();
       }
     }
+    // reset per-column select-all state
+    this.columnSelectAll = {};
+    this.columnExcludedIds = {};
+    this.columnSelectedCount = {};
+    this.columnTotalCount = {};
+    this.prevFilterOptionsLengths = {};
     if (this.is_employeeDropdown && this.is_leaveTypes) {
       this.selectedLeaveType = this.leaveTypes[0].id;
+      this.leaveTypeDisplayControl.setValue(this.leaveTypes[0], { emitEvent: false });
+      this.filteredLeaveTypesAuto = [...this.leaveTypes];
       this.getEmployeesList(true);
     } else if (!this.is_employeeDropdown && this.is_leaveTypes) {
       this.selectedLeaveType = this.leaveTypes[0].id;
+      this.leaveTypeDisplayControl.setValue(this.leaveTypes[0], { emitEvent: false });
+      this.filteredLeaveTypesAuto = [...this.leaveTypes];
       this.actionEvent.emit({
         actionType: 'leaveType',
         detail: {
@@ -585,6 +737,12 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     this.nextPage = {};
     this.filterSearchText = {};
     this.selectedItemsMap = {};
+    // reset per-column select-all state
+    this.columnSelectAll = {};
+    this.columnExcludedIds = {};
+    this.columnSelectedCount = {};
+    this.columnTotalCount = {};
+    this.prevFilterOptionsLengths = {};
     this.actionEvent.emit({ actionType: 'headerTabs', action: 'True' });
   }
 
@@ -604,6 +762,12 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     this.nextPage = {};
     this.filterSearchText = {};
     this.selectedItemsMap = {};
+    // reset per-column select-all state
+    this.columnSelectAll = {};
+    this.columnExcludedIds = {};
+    this.columnSelectedCount = {};
+    this.columnTotalCount = {};
+    this.prevFilterOptionsLengths = {};
     this.actionEvent.emit({ actionType: 'headerTabs', action: 'False' });
   }
   // Include All Jobs Checkbox event
@@ -680,7 +844,9 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     }
   }
   private isIncludeFlagEnableLogic(): void {
-    const clientNameFilter = this.columnFilters['client_name'];
+    // Ignore the internal select-all sentinel when calculating effective client selection.
+    const clientNameFilter = (this.columnFilters['client_name'] || [])
+      .filter((id: any) => id !== '__select_all__');
     // Case 1: No client selected — clear everything
     if (!clientNameFilter || clientNameFilter.length === 0) {
       this.allow_sending_status = false;
@@ -936,6 +1102,8 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     if (this.overlayRef) {
       this.overlayRef.dispose();
     }
+    this.destroy$.next();
+    this.destroy$.complete();
   }
   isPositiveOrNegative(value: string): string {
     const number = parseFloat(value);
@@ -1018,6 +1186,114 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     // this.actionEvent.emit({ actionType: 'leaveType', detail: {leave_type:this.selectedLeaveType,reset:false}});
   }
 
+  // ─── Autocomplete Handlers ───────────────────────────────────────────────────
+
+  onEmployeeOptionSelected(event: any): void {
+    this.justSelectedEmployee = true;
+    const selected = event.option.value;
+    if (selected) {
+      this.selectedEmployeeId = selected.user_id;
+      this.selectedDropdownItems['employee'] = [selected];
+      this.dropdownState['employee'].list = [selected];
+      this.actionEvent.emit({
+        actionType: 'leaveType',
+        detail: {
+          leave_type: this.selectedLeaveType,
+          reset: false,
+          user_id: this.selectedEmployeeId,
+        },
+      });
+    }
+  }
+
+  onEmployeeFocus(): void {
+    this.justSelectedEmployee = false;
+    const selectedItems = this.selectedDropdownItems['employee'] || [];
+    this.autoSvc.onFocus(
+      this.dropdownState['employee'],
+      selectedItems,
+      () => this.fetchData('employee', false)
+    );
+  }
+
+  onEmployeeBlur(): void {
+    setTimeout(() => {
+      if (this.justSelectedEmployee) {
+        this.justSelectedEmployee = false;
+        return;
+      }
+      const currentValue = this.employeeDisplayControl.value;
+      // If user cleared the input, treat as deselection
+      if (currentValue === '' || currentValue === null) {
+        this.selectedEmployeeId = null;
+        this.selectedDropdownItems['employee'] = [];
+        this.employeeDisplayControl.setValue('');
+        this.dropdownState['employee'].list = [];
+        this.dropdownState['employee'].initialized = false;
+        return;
+      }
+      const selectedItems = this.selectedDropdownItems['employee'] || [];
+      if (selectedItems.length > 0) {
+        this.employeeDisplayControl.setValue(selectedItems[0]);
+        this.dropdownState['employee'].list = [...selectedItems];
+      } else {
+        this.employeeDisplayControl.setValue('');
+        this.dropdownState['employee'].list = [];
+        this.dropdownState['employee'].initialized = false;
+      }
+    }, 200);
+  }
+
+  onLeaveTypeOptionSelected(event: any): void {
+    this.justSelectedLeaveType = true;
+    const selected = event.option.value;
+    if (selected) {
+      this.selectedLeaveType = selected.id;
+      this.filteredLeaveTypesAuto = [selected];
+      this.selectLeaveTypesFunc(event);
+    }
+  }
+
+  onLeaveTypeFocus(): void {
+    this.justSelectedLeaveType = false;
+    const currentValue = this.leaveTypeDisplayControl.value;
+    if (this.selectedLeaveType && typeof currentValue !== 'string') {
+      const selectedItem = this.leaveTypes.find((item: any) => item.id === this.selectedLeaveType);
+      if (selectedItem) {
+        this.filteredLeaveTypesAuto = [selectedItem];
+        return;
+      }
+    }
+    this.filteredLeaveTypesAuto = [...this.leaveTypes];
+  }
+
+  onLeaveTypeBlur(): void {
+    setTimeout(() => {
+      if (this.justSelectedLeaveType) {
+        this.justSelectedLeaveType = false;
+        return;
+      }
+      const currentValue = this.leaveTypeDisplayControl.value;
+      // If user cleared the input, treat as deselection
+      if (currentValue === '' || currentValue === null) {
+        this.selectedLeaveType = null;
+        this.leaveTypeDisplayControl.setValue('');
+        this.filteredLeaveTypesAuto = [...this.leaveTypes];
+        return;
+      }
+      if (this.selectedLeaveType) {
+        const selectedItem = this.leaveTypes.find((item: any) => item.id === this.selectedLeaveType);
+        if (selectedItem) {
+          this.leaveTypeDisplayControl.setValue(selectedItem);
+          this.filteredLeaveTypesAuto = [selectedItem];
+          return;
+        }
+      }
+      this.leaveTypeDisplayControl.setValue('');
+      this.filteredLeaveTypesAuto = [...this.leaveTypes];
+    }, 200);
+  }
+
   dateClass = (date: Date) => {
     return date.getDay() === 0 ? 'sunday-highlight' : '';
   };
@@ -1027,7 +1303,8 @@ export class DynamicTableComponent implements OnInit, OnChanges {
       this.config.columns.find((col) => col.key === columnKey)?.filterOptions ||
       [];
     const searchText = (this.filterSearchText[columnKey] || '').toLowerCase();
-    const selectedIds = this.columnFilters[columnKey] || [];
+    const selectedIds = (this.columnFilters[columnKey] || [])
+      .filter((v: any) => v !== '__select_all__');
 
     // Ensure selectedItemsMap for this column is always up-to-date
     if (!this.selectedItemsMap[columnKey]) {
@@ -1035,19 +1312,34 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     }
 
     // Merge any newly fetched API options into the stored selected items
+    // Only keep items that are actually selected (in columnFilters) — prevents stale items
+    // from persisting after selectAllFun clears everything
     const allSelected = [
-      ...this.selectedItemsMap[columnKey],
+      ...this.selectedItemsMap[columnKey].filter((o: any) => selectedIds.includes(o.id)),
       ...apiOptions.filter((opt: any) => selectedIds.includes(opt.id)),
     ].filter((v, i, arr) => arr.findIndex((o) => o.id === v.id) === i); // remove duplicates
 
     // Update stored selected items
     this.selectedItemsMap[columnKey] = allSelected;
 
-    // Merge selected items with API options (keep selected first)
-    const others = apiOptions
-      .filter((opt: any) => !selectedIds.includes(opt.id))
-      .filter((opt: any) => opt.name?.toLowerCase().includes(searchText));
+    // When searching: show all API results without local re-filtering
+    // (API already returned search-filtered data; applying local filter would hide results)
+    if (searchText) {
+      // Show API results (already search-filtered by API); pin selected items that match search at top
+      const selectedInSearch = allSelected.filter((o: any) =>
+        o.name?.toLowerCase().includes(searchText)
+      );
+      const othersInSearch = apiOptions.filter(
+        (opt: any) => !selectedIds.includes(opt.id)
+      );
+      return [
+        ...selectedInSearch,
+        ...othersInSearch,
+      ].filter((v, i, arr) => arr.findIndex((o) => o.id === v.id) === i);
+    }
 
+    // No search: keep selected first, then remaining API options
+    const others = apiOptions.filter((opt: any) => !selectedIds.includes(opt.id));
     return [...allSelected, ...others];
   }
 
@@ -1113,31 +1405,33 @@ export class DynamicTableComponent implements OnInit, OnChanges {
   // }
   // }
   selectedFilterOptions: { [key: string]: any[] } = {};
-  onSelectionChange(newSelected: any[], col: any) {
-    // this.columnFilters[col.key] = newSelected;
-    // this.tempFilters[col.key] = newSelected;
-    // this.selectedFilterOptions[col.paramskeyId] = [...newSelected];
-    // console.log('selectedFilterOptions',this.selectedFilterOptions)
-    // console.log('newSelected',newSelected,col)
-    //   if(col?.filterOptions){
-    //    this.actionEvent.emit({
-    //     actionType: 'filter',
-    //     detail: newSelected,
-    //     key: col.paramskeyId,
-    //     fromFilter: true
-    //   });
-    // }
+  // --- onSelectionChange ---
+  // Uses (selectionChange) which fires ONLY on real user clicks, never on:
+  //   - programmatic writeValue() calls
+  //   - MatListOption.ngOnDestroy() when *ngFor replaces filterOptions (search/scroll)
+  // This eliminates ALL phantom API calls without needing suppress guards.
+  //
+  // By the time this handler runs, [(ngModel)] has already updated columnFilters[col.key]
+  // via mat-selection-list's _reportValueChange() → _onChange().
+  onSelectionChange(event: any, col: any) {
+    // console.log('config',this.config)
+    // Read the full current selection (already synced to columnFilters by ngModel)
+    const newSelected: any[] = this.columnFilters[col.key] || [];
 
-    const prevSelected = this.selectedFilterOptions[col.paramskeyId] || [];
-    const hasChanged =
-      newSelected.length !== prevSelected.length ||
-      newSelected.some((x) => !prevSelected.includes(x));
-    if (!hasChanged) {
+    // Detect what the user actually clicked
+    const changedValues: any[] = (event.options || []).map((o: any) => o.value);
+
+    // If user clicked 'Select All' sentinel → delegate to selectAllFun
+    if (changedValues.includes('__select_all__')) {
+      this.selectAllFun(col);
       return;
     }
-    this.columnFilters[col.key] = [...newSelected];
+
+    // Filter sentinel from real IDs for three-state calculations
+    const realNewSelected = newSelected.filter((v: any) => v !== '__select_all__');
+    // columnFilters already updated by [(ngModel)]; sync tempFilters + selectedFilterOptions
     this.tempFilters[col.key] = [...newSelected];
-    this.selectedFilterOptions[col.paramskeyId] = [...newSelected];
+    if (col.paramskeyId) { this.selectedFilterOptions[col.paramskeyId] = [...newSelected]; }
     const existing = this.selectedItemsMap[col.key] || [];
     const stillSelected = existing.filter((item) =>
       newSelected.includes(item.id)
@@ -1175,9 +1469,169 @@ export class DynamicTableComponent implements OnInit, OnChanges {
       (item, idx, arr) => arr.findIndex((o) => o.id === item.id) === idx
     );
     if (col?.filterOptions) {
+      const key = col.key;
+      // Handle three-state select-all per column (uses realNewSelected — no sentinel)
+      if (this.columnSelectAll[key] === true) {
+        // Select-all was active; detect newly excluded items
+        const excluded = (col.filterOptions || []).filter((o: any) => !realNewSelected.includes(o.id));
+        this.columnExcludedIds[key] = excluded;
+        const totalRecord = this.columnTotalCount[key] || col.totalCount || (col.filterOptions || []).length;
+        // If every option is excluded, this is effectively an empty selection.
+        if (totalRecord > 0 && excluded.length >= totalRecord) {
+          this.columnSelectAll[key] = null;
+          this.columnExcludedIds[key] = [];
+          this.columnSelectedCount[key] = 0;
+          this.columnTotalCount[key] = 0;
+          this.selectedItemsMap[key] = [];
+          this.columnFilters[key] = [];
+          this.tempFilters[key] = [];
+          if (col.paramskeyId) {
+            this.selectedFilterOptions[col.paramskeyId] = [];
+          }
+        }
+        if (!(totalRecord > 0 && excluded.length >= totalRecord) && excluded.length > 0) {
+          this.columnSelectAll[key] = false;
+          // Remove sentinel so 'Select All' shows unchecked (matches generic-table-filter behaviour)
+          this.columnFilters[key] = realNewSelected;
+          this.tempFilters[key] = realNewSelected;
+          this.selectedFilterOptions[col.paramskeyId] = realNewSelected;
+        }
+      } else if (this.columnSelectAll[key] === false) {
+        // 20th changes 
+        const currentExcluded = this.columnExcludedIds[key] || [];
+        // Step 1: newly unchecked in current view
+        const newlyExcluded = (col.filterOptions || []).filter(
+          (o: any) => !realNewSelected.includes(o.id)
+        );
+        // Step 2: merge with existing
+        const merged = [
+          ...currentExcluded,
+          ...newlyExcluded.filter(
+            (n) => !currentExcluded.some((e) => e.id === n.id)
+          )
+        ];
+        // Step 3: remove re-selected items
+        const finalExcluded = merged.filter(
+          (e) => !realNewSelected.includes(e.id)
+        );
+
+        this.columnExcludedIds[key] = finalExcluded;
+        const totalRecord = this.columnTotalCount[key] || col.totalCount || (col.filterOptions || []).length;
+
+        if (totalRecord > 0 && finalExcluded.length >= totalRecord) {
+          this.columnSelectAll[key] = null;
+          this.columnExcludedIds[key] = [];
+          this.columnSelectedCount[key] = 0;
+          this.columnTotalCount[key] = 0;
+          this.selectedItemsMap[key] = [];
+          this.columnFilters[key] = [];
+          this.tempFilters[key] = [];
+          if (col.paramskeyId) {
+            this.selectedFilterOptions[col.paramskeyId] = [];
+          }
+        }
+
+        if (finalExcluded.length === 0) {
+          this.columnSelectAll[key] = true;
+          const allWithSentinel = ['__select_all__', ...realNewSelected];
+          this.columnFilters[key] = allWithSentinel;
+          this.tempFilters[key] = allWithSentinel;
+          this.selectedFilterOptions[col.paramskeyId] = allWithSentinel;
+        }
+
+        else if (realNewSelected.length === 0 && !this.filterSearchText[key]) {
+          this.columnSelectAll[key] = null;
+          this.columnExcludedIds[key] = [];
+          this.columnSelectedCount[key] = 0;
+          this.columnTotalCount[key] = 0;
+          this.selectedItemsMap[key] = [];
+          this.columnFilters[key] = [];
+          this.tempFilters[key] = [];
+          if (col.paramskeyId) {
+            this.selectedFilterOptions[col.paramskeyId] = [];
+          }
+        }
+
+        // // Exclude-mode: recalculate excluded
+        // const excluded = (col.filterOptions || []).filter((o: any) => !realNewSelected.includes(o.id));
+        // this.columnExcludedIds[key] = excluded;
+        // if (excluded.length === 0) {
+        //   // All excluded items re-selected → restore select-all with sentinel
+        //   this.columnSelectAll[key] = true;
+        //   const allWithSentinel = ['__select_all__', ...realNewSelected];
+        //   this.columnFilters[key] = allWithSentinel;
+        //   this.tempFilters[key] = allWithSentinel;
+        //   this.selectedFilterOptions[col.paramskeyId] = allWithSentinel;
+        // } else if (realNewSelected.length === 0) {
+        //   // All items manually unchecked → reset to null (no selection)
+        //   this.columnSelectAll[key] = null;
+        //   this.columnExcludedIds[key] = [];
+        //   this.columnSelectedCount[key] = 0;
+        //   this.columnTotalCount[key] = 0;
+        //   this.selectedItemsMap[key] = [];
+        //   this.columnFilters[key] = [];
+        //   this.tempFilters[key] = [];
+        //   if (col.paramskeyId) { this.selectedFilterOptions[col.paramskeyId] = []; }
+        // }
+      }
+      // Update selectedCount using the same rules as generic-table-filter.updateSelectedCount()
+      // selectAll true  → total_no_of_record (stored columnTotalCount, NOT col.totalCount which may be search-filtered)
+      // selectAll false → total_no_of_record - excludedIds.length
+      // selectAll null  → selectedOptions.length (items the user individually ticked)
+      const totalOpts = (col.filterOptions || []).length;
+      // Use stored columnTotalCount (set when selectAll was activated) so search doesn't reduce the count
+      const totalRecord = this.columnTotalCount[key] || col.totalCount || totalOpts;
+      if (this.columnSelectAll[key] === true) {
+        this.columnSelectedCount[key] = totalRecord;
+      } else if (this.columnSelectAll[key] === false) {
+        this.columnSelectedCount[key] = totalRecord - (this.columnExcludedIds[key]?.length || 0);
+      } else {
+        // null: use selectedItemsMap (tracks {id,name} pairs across pages)
+        this.columnSelectedCount[key] = (this.selectedItemsMap[col.key] || []).length;
+        // Auto-promote to selectAll=true when user manually selected ALL items
+        // Prevent auto select-all when user searching !this.filterSearchText[key]
+        if (totalRecord > 0 && this.columnSelectedCount[key] >= totalRecord && !this.filterSearchText[key]) {
+          this.columnSelectAll[key] = true;
+          this.columnExcludedIds[key] = [];
+          this.columnTotalCount[key] = totalRecord;
+          this.columnSelectedCount[key] = totalRecord;
+          this.selectedItemsMap[key] = [];
+          const allWithSentinel = ['__select_all__', ...realNewSelected];
+          this.columnFilters[key] = allWithSentinel;
+          this.tempFilters[key] = allWithSentinel;
+          if (col.paramskeyId) { this.selectedFilterOptions[col.paramskeyId] = allWithSentinel; }
+        }
+      }
+      // Old emit (array of ids)
+      // this.actionEvent.emit({
+      //   actionType: 'filter',
+      //   detail: newSelected,
+      //   key: col.paramskeyId,
+      //   fromFilter: true,
+      // });
+      // New emit (FilterState)
+      const selectAllState = this.columnSelectAll[key] ?? null;
+      // Compute includeAlljobsids: filterOption IDs not in excludedIds (only for client_name on job-status/job-time reports)
+      let includeAlljobsids: any[] = [];
+      if ((this.config.reportType === 'job-status-report' || this.config.reportType === 'job-time-report')
+          && col.key === 'client_name'
+          && (selectAllState === true || selectAllState === false)) {
+        const excludedIdSet = new Set((this.columnExcludedIds[key] || []).map((e: any) => e.id));
+        includeAlljobsids = (col.filterOptions || [])
+          .filter((o: any) => !excludedIdSet.has(o.id))
+          .map((o: any) => o.id);
+      }
       this.actionEvent.emit({
         actionType: 'filter',
-        detail: newSelected,
+        detail: {
+          selectAllValue: selectAllState,
+          selectedOptions: (selectAllState === null)
+            ? (this.selectedItemsMap[col.key] || [])
+            : [],
+          excludedIds: this.columnExcludedIds[key] || [],
+          selectedCount: this.columnSelectedCount[key],
+          includeAlljobsids
+        },
         key: col.paramskeyId,
         fromFilter: true,
       });
@@ -1249,7 +1703,7 @@ export class DynamicTableComponent implements OnInit, OnChanges {
 
   pageSizeDropdown = 50;
 
-  dropdownState = {
+  dropdownState: any = {
     employee: {
       page: 1,
       list: [],
@@ -1260,39 +1714,14 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     },
   };
 
-  dropdownEndpoints = {
+  dropdownEndpoints: any = {
     employee: environment.user,
   };
-
-  private scrollListeners: { [key: string]: (event: Event) => void } = {};
 
   // Selected items for pagination dropdowns
   selectedDropdownItems: { [key: string]: any[] } = {
     employee: [],
   };
-
-  removeScrollListener(key: string) {
-    const panel = document.querySelector(
-      '.cdk-overlay-container .mat-select-panel'
-    );
-    if (panel && this.scrollListeners[key]) {
-      panel.removeEventListener('scroll', this.scrollListeners[key]);
-      delete this.scrollListeners[key];
-    }
-  }
-
-  onScroll(key: string, event: Event) {
-    const target = event.target as HTMLElement;
-    const state = this.dropdownState[key];
-    const scrollTop = target.scrollTop;
-    const scrollHeight = target.scrollHeight;
-    const clientHeight = target.clientHeight;
-    const atBottom = scrollHeight - scrollTop <= clientHeight + 5;
-    if (atBottom && !state.loading && state.page < state.totalPages) {
-      state.page++;
-      this.fetchData(key, true);
-    }
-  }
 
   // Search input for pagination
   onSearchDropdown(key: string, text: string) {
@@ -1300,14 +1729,9 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     state.search = text.trim();
     state.page = 1;
     state.list = [];
-    this.fetchData(key, false);
-  }
-
-  // Clear search input
-  clearSearchDropD(key: string) {
-    this.dropdownState[key].search = '';
-    this.dropdownState[key].page = 1;
-    this.dropdownState[key].list = [];
+    if (!text.trim()) {
+      this.selectedDropdownItems[key] = [];
+    }
     this.fetchData(key, false);
   }
 
@@ -1367,7 +1791,7 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     );
     selectedIds.forEach((id) => {
       if (!selectedItems.some((item) => item.user_id === id)) {
-        const found = state.list.find((item) => item.user_id === id);
+        const found = state.list.find((item: any) => item.user_id === id);
         if (found) {
           selectedItems.push(found);
         } else {
@@ -1379,41 +1803,94 @@ export class DynamicTableComponent implements OnInit, OnChanges {
     this.selectedDropdownItems[key] = selectedItems;
   }
 
-  // Return options with selected items on top, no duplicates
-  getOptionsWithSelectedOnTop(key: string) {
-    const state = this.dropdownState[key];
-    const selectedItems = this.selectedDropdownItems[key] || [];
-    const unselectedItems = state.list.filter(
-      (item) => !selectedItems.some((sel) => sel.user_id === item.user_id)
-    );
-    return [...selectedItems, ...unselectedItems];
+
+  // select all logic - old global version (kept for reference)
+  // selectAllFun() {
+  //   if (this.selectAllValue === true) {
+  //     this.selectAllValue = null;
+  //     this.excludedIds = [];
+  //   } else {
+  //     this.selectAllValue = true;
+  //     this.excludedIds = [];
+  //   }
+  // }
+
+  // select all logic - per column (new)
+  selectAllFun(col: any) {
+    const key = col.key;
+    if (this.columnSelectAll[key] === true) {
+      // true → null: Uncheck Select All — reset everything
+      this.columnSelectAll[key] = null;
+      this.columnExcludedIds[key] = [];
+      this.columnSelectedCount[key] = 0;
+      this.columnTotalCount[key] = 0;
+      this.selectedItemsMap[key] = [];
+      if (col.paramskeyId) { this.selectedFilterOptions[col.paramskeyId] = []; }
+      // Defer clearing columnFilters to next CD cycle so [(ngModel)]'s writeValue picks it up.
+      setTimeout(() => {
+        this.columnFilters[key] = [];
+        this.tempFilters[key] = [];
+        // running the function because when there is one data and we select that data and then select all then also the include jobs should work
+        if (this.config.showIncludeAllJobs && key === 'client_name') {
+          this.isIncludeFlagEnableLogic();
+        }
+      });
+    } else {
+      // false → true OR null → true: Select all — clear excludedIds, select everything
+      this.columnSelectAll[key] = true;
+      this.columnExcludedIds[key] = [];
+      const allIds = (col.filterOptions || []).map((o: any) => o.id);
+      const allIdsWithSentinel = ['__select_all__', ...allIds];
+      this.columnFilters[key] = allIdsWithSentinel;
+      this.tempFilters[key] = allIdsWithSentinel;
+      // Use col.totalCount (from API) like generic-table-filter's totalCount pattern
+      const total = col.totalCount || allIds.length;
+      this.columnTotalCount[key] = total;
+      this.columnSelectedCount[key] = total;
+      // Sync selectedFilterOptions so onSelectionChange's hasChanged guard does not override columnSelectAll
+      if (col.paramskeyId) { this.selectedFilterOptions[col.paramskeyId] = allIdsWithSentinel; }
+        // running the function because when there is one data and we select that data and then select all then also the include jobs should work
+      if (this.config.showIncludeAllJobs && key === 'client_name') {
+        this.isIncludeFlagEnableLogic();
+      }
+    }
+    if (col?.filterOptions) {
+      // selectAll true  → selectedOptions = [], excludedIds = [], selectedCount = totalCount
+      // selectAll null  → selectedOptions = [], excludedIds = [], selectedCount = 0  (user deselected all)
+      const selectAllState = this.columnSelectAll[key] ?? null;
+      // Compute includeAlljobsids for selectAllFun (only for client_name on job-status/job-time reports)
+      let includeAlljobsids: any[] = [];
+      if ((this.config.reportType === 'job-status-report' || this.config.reportType === 'job-time-report')
+          && col.key === 'client_name'
+          && selectAllState === true) {
+        includeAlljobsids = (col.filterOptions || []).map((o: any) => o.id);
+      }
+      this.actionEvent.emit({
+        actionType: 'filter',
+        detail: {
+          selectAllValue: selectAllState,
+          selectedOptions: [],
+          excludedIds: [],
+          selectedCount: this.columnSelectedCount[key],
+          includeAlljobsids
+        },
+        key: col.paramskeyId,
+        fromFilter: true,
+      });
+    }
   }
 
-  // Called when the dropdown opens or closes
-  onDropdownOpened(isOpen, key: string) {
-    if (isOpen) {
-      if (
-        !this.dropdownState[key].initialized ||
-        this.dropdownState[key].list.length === 0
-      ) {
-        this.dropdownState[key].page = 1;
-        this.fetchData(key, false);
-        this.dropdownState[key].initialized = true;
-      }
-      setTimeout(() => {
-        this.removeScrollListener(key);
+  nextWeek() {
+    this.actionEvent.emit({
+        actionType: 'weekChange',
+        detail:{value: 'next-week-change'}
+     });
+  }
 
-        const panel = document.querySelector(
-          '.cdk-overlay-container .mat-select-panel'
-        );
-        if (panel) {
-          this.scrollListeners[key] = (event: Event) =>
-            this.onScroll(key, event);
-          panel.addEventListener('scroll', this.scrollListeners[key]);
-        }
-      }, 0);
-    } else {
-      this.removeScrollListener(key);
-    }
+  previousWeek() {
+     this.actionEvent.emit({
+        actionType: 'weekChange',
+        detail:{value: 'previous-week-change'}
+     });
   }
 }

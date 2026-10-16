@@ -135,15 +135,15 @@
 
             <ng-container *ngIf="(allClientBasedJobsLists?.results) as result">
               <tr *ngFor='let item of result | customSort:directionValue:sortValue|paginate : {
-                             itemsPerPage: tableSize,
-                             currentPage: page,
-                             totalItems: count
+                             itemsPerPage: viewTableSize,
+                             currentPage: viewPage,
+                             totalItems: viewCount
                            }; let i=index'>
                 <td>{{item?.job_number || '-'}}</td>
                 <td class="job-client-text-left">{{item?.job_name || '-'}}</td>
                 <td>{{item?.job_type_name || '-'}}</td>
                 <td>{{item?.job_allocation_date | dateFormater}}</td>
-                <td class="job-client-text-left">{{item?.employee[0].employee__full_name || '-'}}</td>
+                <td class="job-client-text-left">{{item.employee && item.employee.length > 0 ? item.employee[0].employee__full_name : '-'}}</td>
                 <td>{{item?.employee[0]?.manager__full_name || '-'}}</td>
                 <td>{{item?.status_date | dateFormater}}</td>
                 <td>{{item?.option_value || '-'}}</td>
@@ -153,7 +153,7 @@
                 <td>{{item?.total_amount || '-'}}</td>
               </tr>
               <tr class="bg-transparent">
-                <td colspan="4" class="bg-transparent"></td>
+                <td colspan="8" class="bg-transparent"></td>
                 <td class="bg-transparent"><b>TOTAL {{allClientBasedJobsLists?.total_hours}} hrs</b></td>
                 <td class="bg-transparent"></td>
                 <td class="bg-transparent"><b>{{allClientBasedJobsLists?.total_amount}} /-</b></td>
@@ -175,9 +175,9 @@
         </pagination-controls>
         <div class="items-per-page-container">
           <div>Items per page</div>
-          <mat-select [(ngModel)]="tableSize" (selectionChange)="onTableSizeChange($event)" placeholder="10"
+          <mat-select [(ngModel)]="viewTableSize" (selectionChange)="onTableSizeChange($event)" placeholder="10"
             disableOptionCentering panelClass="paginationPanelClass" class="page-size">
-            <mat-option *ngFor="let size of tableSizes" [value]="size">{{size}}</mat-option>
+            <mat-option *ngFor="let size of viewTableSizes" [value]="size">{{size}}</mat-option>
           </mat-select>
         </div>
       </div>

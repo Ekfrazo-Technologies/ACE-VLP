@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { tableColumns } from '../job-time-reports/job-time-reprots-config'
 import { CommonServiceService } from '../../../service/common-service.service';
 import { ApiserviceService } from '../../../service/apiservice.service';
@@ -6,13 +6,16 @@ import { buildPaginationQuery } from '../../../shared/pagination.util';
 import { environment } from '../../../../environments/environment';
 import { JobTimeSheetDetailsPopupComponent } from '../common/job-time-sheet-details-popup/job-time-sheet-details-popup.component';
 import { MatDialog } from '@angular/material/dialog';
-
+import { FilterQueryService } from '../../../service/filter-query.service';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 @Component({
   selector: 'app-job-time-reports',
   templateUrl: './job-time-reports.component.html',
   styleUrls: ['./job-time-reports.component.scss']
 })
-export class JobTimeReportsComponent implements OnInit {
+export class JobTimeReportsComponent implements OnInit, OnDestroy {
+  private destroy$ = new Subject<void>();
   BreadCrumbsTitle: any = 'Job Time Report';
   term: string = '';
   tableSize: number = 50;
@@ -40,7 +43,7 @@ export class JobTimeReportsComponent implements OnInit {
   statusList: String[] = [];
   user_id: any;
   userRole: any;
-  client_id: any;
+  client_id:any = null;
   isIncludeAllJobEnable: boolean = true;
   isIncludeAllJobValue: boolean = false;
   clientName: { id: any; name: string; }[] = [];
@@ -57,6 +60,7 @@ export class JobTimeReportsComponent implements OnInit {
     private common_service: CommonServiceService,
     private api: ApiserviceService,
     private dialog: MatDialog,
+    private filterQueryService: FilterQueryService
   ) {
     this.user_id = sessionStorage.getItem('user_id');
     this.userRole = sessionStorage.getItem('user_role_name');
@@ -70,8 +74,13 @@ export class JobTimeReportsComponent implements OnInit {
     }, 500);
   }
 
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
   getJobStatusList() {
-    this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).subscribe(
+    this.api.getData(`${environment.live_url}/${environment.settings_job_status}/`).pipe(takeUntil(this.destroy$)).subscribe(
       (resData: any) => {
         if (resData) {
           this.allJobStatus = resData;
@@ -120,7 +129,7 @@ export class JobTimeReportsComponent implements OnInit {
   }
 
   // Called from <app-dynamic-table> via @Output actionEvent
-  handleAction(event: any) {
+  handleAction(event: { actionType: string; detail: any; key: string; fromFilter?: boolean; action?: any; client_id?: any; row?: any }) {
     switch (event.actionType) {
       case 'navigate_employee':
         this.viewtimesheetDetails(event);
@@ -132,7 +141,7 @@ export class JobTimeReportsComponent implements OnInit {
         this.onTableDataChange(event.detail);
         break;
       case 'tableSizeChange':
-        this.onTableSizeChange(event.detail);
+        if (!event.fromFilter) this.onTableSizeChange(event.detail);
         break;
       case 'search':
         this.onSearch(event.detail);
@@ -147,14 +156,17 @@ export class JobTimeReportsComponent implements OnInit {
         this.onSorting(event);
         break;
       case 'headerTabs':
-        this.tabStatus = event['action'];
+        this.tabStatus = event.action;
         this.page = 1;
         this.tableSize = 50;
+         this.client_id = null;
         this.selectedClientIds = [];
         this.selectedJobIds = [];
         this.selectedStatusIds = [];
         this.primaryEmployees = [];
         this.filterDataCache = {};
+        this.isIncludeAllJobEnable=true;
+        this.isIncludeAllJobValue=false;
         this.getTableData({
           page: this.page,
           pageSize: this.tableSize,
@@ -169,11 +181,15 @@ export class JobTimeReportsComponent implements OnInit {
         this.onApplyFilter(event.detail, event.key);
         break;
       case 'includeAllJobs':
-        this.isIncludeAllJobValue = event['action'];
-        this.client_id = event['action'] && event['client_id'] ? event['client_id'] : null;
-        this.isIncludeAllJobEnable = event['action'] || (!event['action'] && event['client_id']) ? false : true;
+        this.isIncludeAllJobValue = event.action;
+        this.client_id = event.action && event.client_id ? event.client_id : null;
+        this.isIncludeAllJobEnable = event.action || (!event.action && event.client_id) ? false : true;
         this.page = 1;
         this.filterDataCache = {};
+        this.selectedJobIds = [];
+        this.primaryEmployees = [];
+        this.filterDataCache['job-ids'] = {data: [], page: 0, total: 0, searchTerm: ''};
+        this.filterDataCache['is-primary-ids'] = {data: [], page: 0, total: 0, searchTerm: ''};
         // this.selectedJobIds = []
         // console.log(this.filterDataCache)
         this.getTableData({
@@ -187,7 +203,7 @@ export class JobTimeReportsComponent implements OnInit {
         });
         break;
       case 'sendEmail':
-        this.client_id = event['client_id'] ? event['client_id'] : null;
+        this.client_id = event.client_id ? event.client_id : null;
         this.sendEamils();
         break;
       default:
@@ -216,18 +232,28 @@ export class JobTimeReportsComponent implements OnInit {
       prime_emp: this.primaryEmployees
     });
   }
-  onApplyFilter(filteredData: any[], filteredKey: string): void {
+  onApplyFilter(filteredData: any, filteredKey: string): void {
 
     if (filteredKey === 'client-ids') {
       this.selectedClientIds = filteredData;
-      if (filteredData && filteredData.length === 0 || filteredData.length > 1) {
+      const { count, singleId } = this.getEffectiveClientSelection(filteredData);
+    if(count !== 1){
         this.filterDataCache = {};
         this.isIncludeAllJobEnable = true;
         this.isIncludeAllJobValue = false;
         this.client_id = null;
       } else {
-        this.isIncludeAllJobEnable = false;
-      }
+        this.isIncludeAllJobEnable=false;
+        this.client_id = singleId;
+    }
+    // When selectAll=false with excludedIds, use includeAlljobsids to determine single client
+    if (filteredData?.selectAllValue === false && filteredData?.excludedIds?.length > 0
+        && filteredData?.includeAlljobsids?.length === 1) {
+       this.client_id = filteredData.includeAlljobsids[0];
+      this.isIncludeAllJobEnable = false;
+    } else if (count !== 1) {
+      this.client_id = null;
+    }
     }
     if (filteredKey === 'job-ids') {
       this.selectedJobIds = filteredData;
@@ -250,27 +276,87 @@ export class JobTimeReportsComponent implements OnInit {
       prime_emp: this.primaryEmployees
     });
   }
-  exportCsvOrPdf(fileType: any) {
+
+  private getEffectiveClientSelection(filterValue: any): { count: number; singleId: any } {
+    // Old format: plain array of ids
+    if (Array.isArray(filterValue)) {
+      return { count: filterValue.length, singleId: filterValue.length === 1 ? filterValue[0] : null };
+    }
+    if (!filterValue) return { count: 0, singleId: null };
+
+    const { selectAllValue, selectedOptions, excludedIds, selectedCount } = filterValue;
+
+    if (selectAllValue === null || selectAllValue === undefined) {
+      // null → use selectedOptions.length
+      const count = selectedOptions?.length || 0;
+      return { count, singleId: count === 1 ? selectedOptions[0].id : null };
+    } else if (selectAllValue === true) {
+      // true → use selectedCount (equals total)
+      const count = selectedCount || 0;
+      if (count === 1) {
+        const cache = this.filterDataCache['client-ids'];
+        return { count: 1, singleId: cache?.data?.[0]?.id || null };
+      }
+      return { count, singleId: null };
+    } else if (selectAllValue === false) {
+      // false → total minus excludedIds.length
+      const cache = this.filterDataCache['client-ids'];
+      const total = cache?.total || 0;
+      const excludedCount = excludedIds?.length || 0;
+      const count = total - excludedCount;
+
+      if (count === 1 && cache?.data) {
+        const excludedIdSet = new Set(excludedIds.map((e: any) => e.id ?? e));
+        const singleClient = cache.data.find((c: any) => !excludedIdSet.has(c.id));
+        return { count: 1, singleId: singleClient?.id || null };
+      }
+      return { count, singleId: null };
+    }
+    return { count: 0, singleId: null };
+  }
+
+// select all code
+private buildQueryForFilter(filterValue: any, paramName: string): string {
+    if (!filterValue) return '';
+    // Old format: plain array of ids
+    if (Array.isArray(filterValue)) {
+      return filterValue.length ? `&${paramName}=[${filterValue.join(',')}]` : '';
+    }
+    // New format: FilterState object
+    return this.filterQueryService.buildFilterSegment(filterValue, paramName);
+  }
+  exportCsvOrPdf(fileType: string) {
     const search = this.term?.trim().length >= 2 ? `search=${encodeURIComponent(this.term.trim())}&` : '';
     let query = `?${search}job-status=[${this.statusList}]&report-type=job-time-report&non-productive-jobs=false&file-type=${fileType}&download=true`
     query += this.client_id ? `&client=${this.client_id}` : '';
-    if (this.userRole === 'Manager' && !this.client_id) {
+    // old code
+    // if (this.userRole === 'Manager' && !this.client_id) {
+    //   query += `&employee-id=${this.user_id}`;
+    // } else if ((this.userRole != 'Manager' && this.userRole != 'Admin') && !this.client_id) {
+    //   query += `&employee-id=${this.user_id}`;
+    // }
+    // if (this.primaryEmployees?.length > 0) {
+      //   query += `&employee-ids=[${this.primaryEmployees}]`;
+      // }
+      // if (this.selectedClientIds?.length) {
+    //   query += `&client-ids=[${this.selectedClientIds.join(',')}]`;
+    // }
+    // if (this.selectedJobIds?.length) {
+      //   query += `&job-ids=[${this.selectedJobIds.join(',')}]`;
+    // }
+    // if (this.selectedStatusIds?.length) {
+    //   query += `&job-status-ids=[${this.selectedStatusIds.join(',')}]`;
+    
+    // }
+    if(this.userRole ==='Manager' && !(this.client_id && this.isIncludeAllJobValue)){
+        query += `&employee-id=${this.user_id}`;
+    } else if ((this.userRole !='Manager' && this.userRole !='Admin') && !(this.client_id && this.isIncludeAllJobValue)){
       query += `&employee-id=${this.user_id}`;
-    } else if ((this.userRole != 'Manager' && this.userRole != 'Admin') && !this.client_id) {
-      query += `&employee-id=${this.user_id}`;
     }
-    if (this.primaryEmployees?.length > 0) {
-      query += `&employee-ids=[${this.primaryEmployees}]`;
-    }
-    if (this.selectedClientIds?.length) {
-      query += `&client-ids=[${this.selectedClientIds.join(',')}]`;
-    }
-    if (this.selectedJobIds?.length) {
-      query += `&job-ids=[${this.selectedJobIds.join(',')}]`;
-    }
-    if (this.selectedStatusIds?.length) {
-      query += `&job-status-ids=[${this.selectedStatusIds.join(',')}]`;
-    }
+     query += this.buildQueryForFilter(this.primaryEmployees, 'employee');
+    query += this.buildQueryForFilter(this.selectedClientIds, 'client');
+    query += this.buildQueryForFilter(this.selectedJobIds, 'job');
+    query += this.buildQueryForFilter(this.selectedStatusIds, 'job-status');
     const url = `${environment.live_url}/${environment.all_jobs}/${query}`;
     window.open(url, '_blank');
   }
@@ -305,7 +391,7 @@ export class JobTimeReportsComponent implements OnInit {
     finalQuery += `&job-status=[${this.statusList}]`;
     // Yet to integrate
     if (this.client_id) {
-      this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).subscribe((respData: any) => {
+      this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).pipe(takeUntil(this.destroy$)).subscribe((respData: any) => {
         if (respData) {
           this.api.showSuccess(respData['message']);
         }
@@ -340,12 +426,13 @@ export class JobTimeReportsComponent implements OnInit {
           ...col,
           filterOptions: cache.data,
           currentPage: cache.page,
-          totalPages: Math.ceil(cache.total / 20)
+          totalPages: Math.ceil(cache.total / 20),
+          totalCount: cache.total
         }
         : col
     );
   }
-  async getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string; client_ids?: any[]; job_ids?: any[]; job_status?: any[]; prime_emp?: any }) {
+  getTableData(params?: { page?: number; pageSize?: number; searchTerm?: string; client_ids?: any[]; job_ids?: any[]; job_status?: any[]; prime_emp?: any }) {
     let finalQuery;
     this.formattedData = [];
     const page = params?.page ?? this.page;
@@ -354,29 +441,41 @@ export class JobTimeReportsComponent implements OnInit {
     const query = buildPaginationQuery({ page, pageSize, searchTerm });
     this.jobStatusList(this.tabStatus);
     finalQuery = query + `&job-status=[${this.statusList}]`;
-    if (this.userRole === 'Manager' && !this.client_id) {
-      finalQuery += `&employee-id=${this.user_id}`;
-    } else if ((this.userRole != 'Manager' && this.userRole != 'Admin') && !this.client_id) {
-      finalQuery += `&employee-id=${this.user_id}`;
-    }
-    if (params?.prime_emp?.length > 0) {
-      finalQuery += `&employee-ids=[${params?.prime_emp}]`;
-    }
-    finalQuery += this.client_id ? `&client=${this.client_id}` : '';
+    // if (this.userRole === 'Manager' && !this.client_id) {
+    //   finalQuery += `&employee-id=${this.user_id}`;
+    // } else if ((this.userRole != 'Manager' && this.userRole != 'Admin') && !this.client_id) {
+    //   finalQuery += `&employee-id=${this.user_id}`;
+    // }
+    // if (params?.prime_emp?.length > 0) {
+    //   finalQuery += `&employee-ids=[${params?.prime_emp}]`;
+    // }
+    // finalQuery += this.client_id ? `&client=${this.client_id}` : '';
+    // if (params?.client_ids?.length) {
+    //   finalQuery += `&client-ids=[${params.client_ids.join(',')}]`;
+    // }
+    // if (params?.job_ids?.length) {
+    //   finalQuery += `&job-ids=[${params.job_ids.join(',')}]`;
+    // }
+    // if (params?.job_status?.length) {
+    //   finalQuery += `&job-status-ids=[${params.job_status.join(',')}]`;
+    // }
+    // select all code 
     finalQuery += `&report-type=job-time-report&non-productive-jobs=false`;
-    if (params?.client_ids?.length) {
-      finalQuery += `&client-ids=[${params.client_ids.join(',')}]`;
+    if(this.userRole ==='Manager' && !(this.client_id && this.isIncludeAllJobValue)){
+      finalQuery += `&employee-id=${this.user_id}`;
+    } else if ((this.userRole !='Manager' && this.userRole !='Admin') && !(this.client_id && this.isIncludeAllJobValue)){
+      finalQuery += `&employee-id=${this.user_id}`;
     }
-    if (params?.job_ids?.length) {
-      finalQuery += `&job-ids=[${params.job_ids.join(',')}]`;
-    }
-    if (params?.job_status?.length) {
-      finalQuery += `&job-status-ids=[${params.job_status.join(',')}]`;
-    }
-    if (this.directionValue && this.sortValue) {
+    console.log(this.client_id, this.isIncludeAllJobValue);
+    finalQuery += (this.client_id && this.isIncludeAllJobValue) ? `&client=${this.client_id}` : '';
+    finalQuery += this.buildQueryForFilter(params?.prime_emp, 'employee');
+    finalQuery += this.buildQueryForFilter(params?.client_ids, 'client');
+    finalQuery += this.buildQueryForFilter(params?.job_ids, 'job');
+    finalQuery += this.buildQueryForFilter(params?.job_status, 'job-status');
+     if (this.directionValue && this.sortValue) {
       finalQuery += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`;
     }
-    await this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).subscribe((res: any) => {
+    this.api.getData(`${environment.live_url}/${environment.all_jobs}/${finalQuery}`).pipe(takeUntil(this.destroy$)).subscribe((res: any) => {
       if (res.results) {
         this.formattedData = res.results?.map((item: any, i: number) => ({
           sl: (page - 1) * pageSize + i + 1,
@@ -400,7 +499,10 @@ export class JobTimeReportsComponent implements OnInit {
             }
             return {
               ...col,
-              filterOptions
+              filterOptions,
+                ...(existingCol?.totalCount   !== undefined && { totalCount:   existingCol.totalCount }),
+              ...(existingCol?.currentPage  !== undefined && { currentPage:  existingCol.currentPage }),
+              ...(existingCol?.totalPages   !== undefined && { totalPages:   existingCol.totalPages }),
             };
           }),
           data: this.formattedData,
@@ -426,18 +528,27 @@ export class JobTimeReportsComponent implements OnInit {
         };
       }
       else {
+        const existingColumnsEmpty = this.tableConfig?.columns ?? [];
         this.tableConfig = {
           columns: tableColumns(this.userRole)?.map(col => {
-            let filterOptions: any = [];
-            if (col.filterable) {
-              if (col.key === 'client_name') { filterOptions = this.clientName; }
-              else if (col.key === 'job_name') { filterOptions = this.jobName; }
-              else if (col.key === 'job_status_name') {
+                  const existingCol = existingColumnsEmpty.find((c: any) => c.key === col.key);
+                  let filterOptions:any = existingCol?.filterOptions ?? [];
+                  if (!filterOptions.length && col.filterable) {
+                    if (col.key === 'client_name') { filterOptions = this.clientName; }
+                    else if (col.key === 'job_name') { filterOptions = this.jobName; }
+                      else if (col.key === 'job_status_name') {
                 filterOptions = this.statusName;
               }
-            }
-            return { ...col, filterOptions };
-          }),
+                
+                  }
+                  return {
+                    ...col,
+                    filterOptions,
+                    ...(existingCol?.totalCount   !== undefined && { totalCount:   existingCol.totalCount }),
+                    ...(existingCol?.currentPage  !== undefined && { currentPage:  existingCol.currentPage }),
+                    ...(existingCol?.totalPages   !== undefined && { totalPages:   existingCol.totalPages }),
+                  };
+                }),
           data: [],
           searchTerm: this.term,
           actions: [],
@@ -501,9 +612,11 @@ export class JobTimeReportsComponent implements OnInit {
     }
     if (key === 'job-ids') {
       endpoint = environment.only_jobs
-      query += `&non-productive-jobs=false`;
+      query += `&non-productive-jobs=false&job-status=[${this.statusList}]`;
       if (this.isIncludeAllJobValue) {
-        query += `&client-ids=[${this.selectedClientIds}]&job-status=[${this.statusList}]`
+        // old code
+        // query += `&client-ids=[${this.selectedClientIds}]`
+         query += `&client-ids=[${this.client_id}]`
       } else {
         query += this.userRole === 'Admin' ? '' : `&employee-id=${this.user_id}`;
       }
@@ -515,13 +628,16 @@ export class JobTimeReportsComponent implements OnInit {
       endpoint = environment.get_primary_employees;
       query += `&job-status=[${this.statusList}]`;
       if (this.isIncludeAllJobValue) {
-        query += `&client-id=${this.selectedClientIds}`
+        // old code
+        // query += `&client-id=${this.selectedClientIds}`
+        query += `&client-ids=[${this.client_id}]`;
       } else {
         query += this.userRole === 'Admin' ? '' : `&manager-id=${this.user_id}`
       }
     }
 
     this.api.getData(`${environment.live_url}/${endpoint}/${query}`)
+      .pipe(takeUntil(this.destroy$))
       .subscribe((res: any) => {
         if (!res) return;
 

@@ -1,5 +1,5 @@
-import { ChangeDetectorRef, Component, ElementRef, EventEmitter, OnInit, Output, ViewChild } from '@angular/core';
-import { FormGroup, FormBuilder, Validators, FormGroupDirective } from '@angular/forms';
+import { ChangeDetectorRef, Component, ElementRef, EventEmitter, OnDestroy, OnInit, Output, ViewChild } from '@angular/core';
+import { FormGroup, FormBuilder, Validators, FormGroupDirective, FormControl } from '@angular/forms';
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap';
 import { CommonServiceService } from '../../../service/common-service.service';
 import { ApiserviceService } from '../../../service/apiservice.service';
@@ -13,23 +13,50 @@ import { debounceTime, distinctUntilChanged, filter, Observable, Subject } from 
 import { SubModuleService } from '../../../service/sub-module.service';
 import { GenericTableFilterComponent } from '../../../shared/generic-table-filter/generic-table-filter.component';
 import { DropDownPaginationService } from '../../../service/drop-down-pagination.service';
-import { GenericTimesheetConfirmationComponent } from 'src/app/generic-components/generic-timesheet-confirmation/generic-timesheet-confirmation.component';
+import { FilterQueryService } from '../../../service/filter-query.service';
+import { GenericTimesheetConfirmationComponent } from '../../../generic-components/generic-timesheet-confirmation/generic-timesheet-confirmation.component';
+import { MatAutocompleteService } from '../../../service/mat-autocomplete.service';
+import { ErrorStateMatcher } from '@angular/material/core';
+import { MAT_AUTOCOMPLETE_SCROLL_STRATEGY } from '@angular/material/autocomplete';
+import { Overlay } from '@angular/cdk/overlay';
+
 export interface IdNamePair {
   id: any;
   name: string;
 }
+
+export interface FilterState {
+  selectAllValue: boolean | null;
+  selectedOptions: IdNamePair[];
+  excludedIds: IdNamePair[];
+  selectedCount: number;
+}
 @Component({
   selector: 'app-edit-client',
   templateUrl: './edit-client.component.html',
-  styleUrls: ['./edit-client.component.scss']
+  styleUrls: ['./edit-client.component.scss'],
+  providers: [
+        {
+          provide: MAT_AUTOCOMPLETE_SCROLL_STRATEGY,
+          useFactory: (overlay: Overlay) => () => overlay.scrollStrategies.close(),
+          deps: [Overlay]
+        }
+      ],
 })
-export class EditClientComponent implements CanComponentDeactivate, OnInit {
+export class EditClientComponent implements CanComponentDeactivate, OnInit, OnDestroy {
+  // ── Autocomplete infrastructure ──
+  private destroy$ = new Subject<void>();
+  groupDisplayControl = new FormControl('');
+  filteredGroupsAuto: any[] = [];
+  displayGroupFn!: (item: any) => string;
+  groupErrorMatcher!: ErrorStateMatcher;
+  // ──────────────────────────────────
   @ViewChild(FormGroupDirective) formGroupDirective!: FormGroupDirective;
-  @ViewChild('formInputField') formInputField: ElementRef;
+  @ViewChild('formInputField') formInputField!: ElementRef;
   @ViewChild('groupFilter') groupFilter!: GenericTableFilterComponent;
   private searchSubject = new Subject<string>();
   isEditItem: boolean = false;
-  endClientForm: FormGroup;
+  endClientForm!: FormGroup;
   selectedJobStatus: any;
   allEndClients: any = [];
   allGroupList: any = [];
@@ -45,8 +72,8 @@ export class EditClientComponent implements CanComponentDeactivate, OnInit {
     group__group_name:false,
 
   };
-  filters: { group_name: IdNamePair[]} = {
-    group_name: [],
+  filters: { [key: string]: FilterState } = {
+    group_name: { selectAllValue: null, selectedOptions: [], excludedIds: [], selectedCount: 0 }
   }
   allGroupsNames:IdNamePair[] = [];
   arrow: boolean = false;
@@ -55,7 +82,7 @@ export class EditClientComponent implements CanComponentDeactivate, OnInit {
   searchGroupText:any;
   initialFormValue:any;
   filteredList = [];
-    filterQuery: string;
+    filterQuery: string | undefined;
     endclientList:any=[];
     accessPermissions = [];
   user_role_name:any;
@@ -69,9 +96,12 @@ export class EditClientComponent implements CanComponentDeactivate, OnInit {
     private accessControlService:SubModuleService,
     private cdr: ChangeDetectorRef,
     private dropdownService: DropDownPaginationService,
+    private filterQueryService: FilterQueryService,
+    private autoSvc: MatAutocompleteService,
   ) {
     this.user_id = sessionStorage.getItem('user_id');
     this.user_role_name = sessionStorage.getItem('user_role_name');
+    this.displayGroupFn = this.autoSvc.createDisplayFn('group_name');
     if(this.activeRoute.snapshot.paramMap.get('id')){
       this.client_id= this.activeRoute.snapshot.paramMap.get('id')}
       this.common_service.clientGroupCreationstatus$.subscribe((resp)=>{
@@ -81,8 +111,14 @@ export class EditClientComponent implements CanComponentDeactivate, OnInit {
       });
   }
 
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
   async ngOnInit(): Promise<void> {
     this.initializeForm();
+    this.setupGroupAutocomplete();
     this.searchSubject.pipe(
       debounceTime(500),
       distinctUntilChanged(),
@@ -95,7 +131,7 @@ export class EditClientComponent implements CanComponentDeactivate, OnInit {
     this.getAllEndClients(`?page=1&page_size=50&client=${this.client_id}`);
     this.getGroupList();
   }
-  shouldDisableGroupName:boolean
+  shouldDisableGroupName:boolean = false;
   getModuleAccess(){
     this.accessControlService.getAccessForActiveUrl(this.user_id).subscribe(
       (res:any)=>{
@@ -172,7 +208,7 @@ getUniqueValues(
 ): { id: any; name: string }[] {
   const seen = new Map();
 
-  this.endclientList.forEach(endClient => {
+  this.endclientList.forEach((endClient:any) => {
     const value = extractor(endClient);
     if (value && value.id && !seen.has(value.id)) {
       seen.set(value.id, value.name);
@@ -222,7 +258,7 @@ getUniqueValues(
     }
   }
 
-  Warningconfirmation(data){
+  Warningconfirmation(data:any){
     const modelRef = this.modalService.open(GenericTimesheetConfirmationComponent, {
           size: <any>'sm',
           backdrop: true,
@@ -231,7 +267,7 @@ getUniqueValues(
         modelRef.componentInstance.title = data?.warning;
         modelRef.componentInstance.message = `Confirmation`;
         modelRef.componentInstance.buttonName = `Yes`;
-        modelRef.componentInstance.status.subscribe(resp => {
+        modelRef.componentInstance.status.subscribe((resp: any) => {
           if (resp == "ok") {
             this.confirmSubmit(data);
             modelRef.close();
@@ -242,7 +278,7 @@ getUniqueValues(
         })
   }
 
-  confirmSubmit(data){
+  confirmSubmit(data:any){
     const formData = { ...this.endClientForm.value, confirm: data?.confirm_required };
     const apiCall = this.isEditItem
       ? this.apiService.updateData(`${environment.live_url}/${environment.end_clients}/${this.selectedJobStatus}/`, formData)
@@ -265,6 +301,8 @@ getUniqueValues(
   public resetFormState() {
     this.formGroupDirective.resetForm();
     this.endClientForm.patchValue({"client":this.client_id});
+    this.groupDisplayControl.setValue('');
+    this.filteredGroupsAuto = [...this.allGroupList];
     this.isEditItem = false;
     this.getModuleAccess();
     this.term='';
@@ -296,7 +334,7 @@ getUniqueValues(
         backdrop: true,
         centered: true
       });
-      modelRef.componentInstance.status.subscribe(resp => {
+      modelRef.componentInstance.status.subscribe((resp: any) => {
         if (resp == "ok") {
           this.deleteContent(content);
           modelRef.close();
@@ -309,7 +347,7 @@ getUniqueValues(
     }
   }
 
-  public deleteContent(item) {
+  public deleteContent(item: any) {
 
     this.apiService.delete(`${environment.live_url}/${environment.end_clients}/${item?.id}/`).subscribe(async (data: any) => {
       if (data) {
@@ -336,7 +374,7 @@ getUniqueValues(
         centered: true
       });
 
-      modalRef.componentInstance.status.subscribe(resp => {
+      modalRef.componentInstance.status.subscribe((resp: any) => {
         if (resp === 'ok') {
           this.selectedJobStatus = item?.id;
           this.isEditItem = true;
@@ -356,18 +394,19 @@ getUniqueValues(
 
   public scrollToField(){
     if (this.formInputField) {
-      this.formInputField?.nativeElement?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      this.formInputField?.nativeElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }
   public getSelectedEndClient(id: any) {
     this.apiService.getData(`${environment.live_url}/${environment.end_clients}/${id}/`).subscribe((respData: any) => {
       this.endClientForm.patchValue({ 'client_name': respData?.client_name });
       this.endClientForm.patchValue({ 'group': respData?.group });
+      this.trySetGroupDisplayControl();
     }, (error: any) => {
       this.apiService.showError(error?.error?.detail);
     })
   }
-  public filterSearch(event) {
+  public filterSearch(event: any) {
      const value = event?.target?.value || '';
     if (value && value.length >= 2) {
       this.page = 1
@@ -384,9 +423,10 @@ getUniqueValues(
     this.allGroupList = [];
     this.apiService.getData(`${environment.live_url}/${environment.clients_group}/?client=${this.client_id}`).subscribe((respData: any) => {
       this.allGroupList = respData;
+      this.filteredGroupsAuto = [...respData];
       this.endclientList = respData;
       this.allGroupsNames = this.getUniqueValues(endClient => ({ id: endClient.id, name: endClient.group_name }));
-
+      this.trySetGroupDisplayControl();
     }, (error: any) => {
       this.apiService.showError(error?.error?.detail);
 
@@ -398,7 +438,7 @@ getUniqueValues(
 
     return itemGroup?.group_name
   }
-  viewJobsOfEndClient(data){
+  viewJobsOfEndClient(data:{id:any,client_name:any}){
     this.router.navigate([`/client/end-client-jobs/${data?.client_name}/${this.client_id}/${data.id}`])
   }
 
@@ -413,16 +453,23 @@ getUniqueValues(
       return this.formErrorScrollService.isFormDirtyOrInvalidCheck(isFormChanged,this.endClientForm);
     }
 
-     private ids(filterArray: any[]): string {
-      if (!Array.isArray(filterArray)) return '';
-      return filterArray.map(x => x.id).join(',');
-    }
+  private getFilterParamName(filterType: string): string {
+    const mapping: { [key: string]: string } = {
+      'group_name': 'group'
+    };
+    return mapping[filterType] || filterType;
+  }
+
+  private buildFilterQuery(filterType: string): string {
+    return this.filterQueryService.buildFilterSegment(this.filters[filterType], this.getFilterParamName(filterType));
+  }
     filterData() {
       this.filterQuery = this.getFilterBaseUrl()
-      if (this.filters.group_name.length) {
-        this.filterQuery += `&group-ids=[${this.ids(this.filters.group_name)}]`;
-      }
-       if(this.directionValue && this.sortValue){
+      
+      // Apply new filter logic for group_name
+      this.filterQuery += this.buildFilterQuery('group_name');
+      
+      if(this.directionValue && this.sortValue){
         this.filterQuery += `&sort-by=${this.sortValue}&sort-type=${this.directionValue}`
        }
 
@@ -441,17 +488,82 @@ getUniqueValues(
     }
 
     fetchGroupClients = (page: number, search: string) => {
+      let extraParams: any = {
+      client: this.client_id,
+    };
     return this.dropdownService.fetchDropdownData$(
       environment.clients_group,
       page,
       search,
       (item) => ({ id: item.id, name: item.group_name }),
+      extraParams
     );
 }
 
 openFilter(filter: any): void {
     if (filter) {
       filter.onMenuOpened();
+    }
+  }
+
+  // ═══════════════ Autocomplete helper methods ═══════════════
+
+  private setupGroupAutocomplete(): void {
+    this.groupErrorMatcher = this.autoSvc.createErrorMatcher(
+      () => this.endClientForm?.get('group') as FormControl
+    );
+
+    this.autoSvc.setupLocalFilter(
+      this.groupDisplayControl,
+      () => this.allGroupList,
+      (filtered) => { this.filteredGroupsAuto = filtered; this.cdr.detectChanges(); },
+      ['group_name'],
+      this.destroy$,
+      200
+    );
+  }
+
+  onGroupOptionSelected(event: any): void {
+    const selected = event.option.value;
+    this.endClientForm.get('group')?.setValue(selected?.id);
+    this.endClientForm.get('group')?.markAsDirty();
+    this.groupDisplayControl.setValue(selected);
+    this.filteredGroupsAuto = [selected];
+  }
+
+  onGroupFocus(): void {
+    const ctrl = this.endClientForm.get('group');
+    if (!ctrl?.value) {
+      this.filteredGroupsAuto = [...this.allGroupList];
+    }
+  }
+
+  onGroupBlur(): void {
+    setTimeout(() => {
+      const ctrl = this.endClientForm.get('group');
+      const displayVal = this.groupDisplayControl.value;
+      // If user cleared the input, also clear the form control
+      if (!displayVal || (typeof displayVal === 'string' && !displayVal.trim())) {
+        ctrl?.setValue(null);
+        this.groupDisplayControl.setValue('');
+        this.filteredGroupsAuto = [...this.allGroupList];
+      } else if (ctrl?.value) {
+        const selectedItem = this.allGroupList.find((g: any) => g.id === ctrl.value);
+        if (selectedItem) {
+          this.groupDisplayControl.setValue(selectedItem, { emitEvent: false });
+        }
+      }
+    }, 150);
+  }
+
+  private trySetGroupDisplayControl(): void {
+    const groupId = this.endClientForm?.get('group')?.value;
+    if (groupId && this.allGroupList.length) {
+      const g = this.allGroupList.find((item: any) => item.id === groupId);
+      if (g) {
+        this.groupDisplayControl.setValue(g, { emitEvent: false });
+        this.filteredGroupsAuto = [g];
+      }
     }
   }
 }

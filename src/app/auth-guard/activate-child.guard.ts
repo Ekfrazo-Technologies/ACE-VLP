@@ -74,7 +74,6 @@ export class ActivateChildGuard implements CanActivateChild {
 
       return hasViewPermission;
     } catch (error: any) {
-
       if (error.status === 404 || error.message?.includes('not found')) {
         this._router.navigate(['/404']);
       } else {

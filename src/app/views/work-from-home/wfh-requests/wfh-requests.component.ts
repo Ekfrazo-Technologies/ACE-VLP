@@ -1,4 +1,5 @@
 import { ChangeDetectorRef, Component, OnInit, ViewChild } from '@angular/core';
+import { ActivatedRoute, Router } from '@angular/router';
 import { DatePipe } from '@angular/common';
 import { MatDialog } from '@angular/material/dialog';
 import { NgbModal } from '@ng-bootstrap/ng-bootstrap';
@@ -12,10 +13,19 @@ import { ApiserviceService } from '../../../service/apiservice.service';
 import { SubModuleService } from '../../../service/sub-module.service';
 import { GenericTableFilterComponent } from '../../../shared/generic-table-filter/generic-table-filter.component';
 import { DropDownPaginationService } from '../../../service/drop-down-pagination.service';
+import { take } from 'rxjs';
+import { NgZone } from '@angular/core';
 
+import { FilterQueryService } from '../../../service/filter-query.service';
 export interface IdNamePair {
   id: any;
   name: string;
+}
+export interface FilterState {
+  selectAllValue: boolean | null;
+  selectedOptions: IdNamePair[];
+  excludedIds: IdNamePair[];
+  selectedCount: number;
 }
 @Component({
   selector: 'app-wfh-requests',
@@ -61,6 +71,8 @@ export class WfhRequestsComponent implements OnInit {
   canDeleteWfh = false;
   showManagementApprovalColumn = false;
   BreadCrumbsTitle: any = 'WFH Request';
+  selectedTabIndex = 0; // 0: My WFH, 1: Team WFH
+  activeTab: 'mine' | 'team' = 'mine';
   constructor(
     private accessControlService: SubModuleService,
     private dialog: MatDialog,
@@ -70,10 +82,16 @@ export class WfhRequestsComponent implements OnInit {
     private datePipe: DatePipe,
     private dropdownService: DropDownPaginationService,
     private common_service: CommonServiceService,
+    private activateRoute: ActivatedRoute,
+    private router: Router,
+    private zone: NgZone,
+    private filterQueryService: FilterQueryService,
   ) {
     this.userRole = sessionStorage.getItem('user_role_name');
     this.user_id = sessionStorage.getItem('user_id');
     this.activeTab = this.userRole === 'Admin' ? 'team' : 'mine';
+    this.selectedTabIndex =
+      this.userRole === 'Admin' || this.userRole === 'Director' ? 1 : 0;
     this.common_service.setTitle(this.BreadCrumbsTitle);
   }
 
@@ -83,16 +101,84 @@ export class WfhRequestsComponent implements OnInit {
     this.getallLeaveTypes();
     this.getleaverequest();
     this.getModuleAccess();
+
+    // Deep-link: open WFH request popup if wfh-id param is present
+    this.activateRoute.queryParamMap.pipe(take(1)).subscribe((params: any) => {
+      const wfhId = params.get('wfh-id');
+      const view = params.get('view');
+      const navEntries = performance.getEntriesByType(
+        'navigation',
+      ) as PerformanceNavigationTiming[];
+      const isReload = navEntries.length > 0 && navEntries[0].type === 'reload';
+
+      if (view === 'wfh-requests' && wfhId && !isReload) {
+        this.selectedTabIndex = 1;
+        this.activeTab = 'team';
+        this.cdr.detectChanges(); // Force tab UI update
+        this.getleaverequest(() => {
+          this.cdr.detectChanges();
+          let stableCount = 0;
+          const stableSub = this.zone.onStable.subscribe(() => {
+            stableCount++;
+            if (stableCount === 2) {
+              stableSub.unsubscribe();
+              // Prevent popup if not logged in as Manager or Director
+              if (!this.user_id) {
+                this.router.navigate(['/login']);
+                return;
+              }
+              this.apiService
+                .getData(
+                  `${environment.live_url}/${environment.apply_wfh}/?id=${wfhId}`,
+                )
+                .subscribe({
+                  next: (popupRes: any) => {
+                    if (
+                      popupRes &&
+                      (popupRes.status === 'Pending' ||
+                        (popupRes.wfh_type_name === 'prolonged_health_issue' &&
+                          popupRes.status === 'Approved' &&
+                          popupRes.is_confirmed_by_director === false))
+                    ) {
+                      this.dialog.open(ViewWfhRequestComponent, {
+                        height: '500px',
+                        width: '50%',
+                        data: { data: popupRes },
+                      });
+                    }
+                    this.getleaverequest();
+                  },
+                  error: (error: any) => {
+                    this.router.navigate([], {
+                      queryParams: {
+                        'wfh-id': null,
+                        view: null,
+                        user_id: null,
+                      },
+                      queryParamsHandling: 'merge',
+                      replaceUrl: true,
+                    });
+                    this.apiService.showError(error?.error?.detail);
+                  },
+                });
+            }
+          });
+        });
+      }
+      if (isReload && wfhId) {
+        this.router.navigate([], {
+          queryParams: { 'wfh-id': null, view: null, user_id: null },
+          queryParamsHandling: 'merge',
+          replaceUrl: true,
+        });
+      }
+    });
   }
 
-  filters: {
-    leave_type: IdNamePair[];
-    employees: IdNamePair[];
-    status_name: IdNamePair[];
-  } = {
-    leave_type: [],
-    employees: [],
-    status_name: [],
+  filters: any = {
+    leave_type: { selectAllValue: null, selectedOptions: [], excludedIds: [], selectedCount: 0 },
+    employees: { selectAllValue: null, selectedOptions: [], excludedIds: [], selectedCount: 0 },
+    status_name: { selectAllValue: null, selectedOptions: [], excludedIds: [], selectedCount: 0 },
   };
   getLeaveStatus() {
     this.apiService
@@ -123,14 +209,6 @@ export class WfhRequestsComponent implements OnInit {
   }
 
   viewDetails(data: any) {
-    // let emails = [];
-    // try {
-    //   emails = JSON.parse(data.cc); // now it's an array
-    // } catch {
-    //   emails = []; // fallback
-    // }
-    // let emailString = emails.join(', ');
-    // data['emailString'] = emailString;
     const dialogRef = this.dialog.open(ViewWfhRequestComponent, {
       height: '500px',
       width: '50%',
@@ -244,13 +322,21 @@ export class WfhRequestsComponent implements OnInit {
 
   selectAll = false;
   onFilterChange(event: any, filterType: string) {
-    const selectedOptions = event;
-    this.filters[filterType] = selectedOptions;
-    console.log(event);
-    if (event.value === 'custom') {
-      console.log('period is selected');
-    }
+    this.filters[filterType] = event;
+    this.page = 1;
     this.getleaverequest();
+  }
+
+  private getFilterParamName(filterType: string): string {
+    const mapping: { [key: string]: string } = {
+      'leave_type': 'leave-type', //leave_type_ids
+      'employees': 'leave-employee', //leave_employee_ids
+    };
+    return mapping[filterType] || filterType;
+  }
+
+  private buildFilterQuery(filterType: string): string {
+    return this.filterQueryService.buildFilterSegment(this.filters[filterType], this.getFilterParamName(filterType));
   }
   onTableSizeChange(event: any): void {
     if (event) {
@@ -318,27 +404,35 @@ export class WfhRequestsComponent implements OnInit {
     return filterArray.map((x) => x.id).join(',');
   }
 
-  getleaverequest() {
+  getleaverequest(afterLoadCb?: () => void) {
     this.count = 0;
     this.filterQuery = this.getFilterBaseUrl();
     if (this.userRole === 'Manager') {
       if (this.activeTab === 'mine') {
         this.filterQuery += `&employee-id=${this.user_id}`;
-      } else if (!this.filters.employees.length) {
-        this.filterQuery += `&manager-id=${this.user_id}`;
+      }   
+      // else if (!this.filters.employees.length) {
+      //   this.filterQuery += `&manager-id=${this.user_id}`;
+      // }
+      else{
+         this.filterQuery += `&manager-id=${this.user_id}`;
       }
     }
     if (this.userRole === 'Accountant') {
       this.filterQuery += `&employee-id=${this.user_id}`;
     }
-    if (this.filters.leave_type.length) {
-      this.filterQuery += `&leave_type_ids=[${this.ids(this.filters.leave_type)}]`;
-    }
-    if (this.filters.employees.length) {
-      this.filterQuery += `&leave_employee_ids=[${this.ids(this.filters.employees)}]`;
-    }
-    if (this.filters.status_name.length) {
-      this.filterQuery += `&status_values=[${this.ids(this.filters.status_name)}]`;
+    this.filterQuery += this.buildFilterQuery('leave_type');
+    this.filterQuery += this.buildFilterQuery('employees');
+    if(this.filters.status_name?.selectAllValue==true){
+      this.filterQuery += `&status_values=[${this.leaveStatus.map((status: any) => `${status.id}`).join(',')}]`
+    } else if(this.filters.status_name?.selectAllValue==false){
+      const excludedIds = this.filters.status_name?.excludedIds?.map((e:any) => e.id) || [];
+      let temp = this.leaveStatus.filter(
+          (status: any) => !excludedIds.includes(status.id)).map((status:any)=>status.id)
+      console.log(temp)
+      this.filterQuery += `&status_values=[${temp}]`;
+    } else if(this.filters.status_name?.selectAllValue==null && this.filters.status_name?.selectedOptions.length>0){
+      this.filterQuery += `&status_values=[${this.filters.status_name?.selectedOptions.map((option: any) => option.id).join(',')}]`;
     }
     if (this.selectedPeriod) {
       this.filterQuery += `&leave_period=${this.selectedPeriod}`;
@@ -365,6 +459,10 @@ export class WfhRequestsComponent implements OnInit {
           const noOfPages: number = res?.['total_pages'];
           this.count = noOfPages * this.tableSize;
           this.page = res?.['current_page'];
+          this.cdr.detectChanges(); // force DOM update
+        }
+        if (afterLoadCb) {
+          setTimeout(() => afterLoadCb(), 0); // defer popup until DOM is updated
         }
       });
   }
@@ -398,24 +496,19 @@ export class WfhRequestsComponent implements OnInit {
       extraParams,
     );
   };
-
   reset() {
     this.page = 1;
     this.tableSize = 50;
     this.selectedPeriod = '';
     this.mainStartDate = '';
     this.mainEndDate = '';
-    this.filters = { leave_type: [], employees: [], status_name: [] };
+    this.filters = {
+      leave_type: { selectAllValue: null, selectedOptions: [], excludedIds: [], selectedCount: 0 },
+      employees: { selectAllValue: null, selectedOptions: [], excludedIds: [], selectedCount: 0 },
+      status_name: { selectAllValue: null, selectedOptions: [], excludedIds: [], selectedCount: 0 },
+    };
     this.getleaverequest();
   }
-
-  isOwnRequest(item: any): boolean {
-    return (
-      String(item?.employee) === String(this.user_id) ||
-      String(item?.employee_id) === String(this.user_id)
-    );
-  }
-
   editWfhRequest(item: any) {
     const dialogRef = this.dialog.open(ApplyWorkFromHomeComponent, {
       data: { mode: 'edit', id: item.id },
@@ -439,14 +532,22 @@ export class WfhRequestsComponent implements OnInit {
     modelRef.componentInstance.status.subscribe((resp: any) => {
       if (resp === 'ok') {
         this.apiService
-          .delete(`${environment.live_url}/${environment.apply_wfh}/?id=${item.id}`)
+          .delete(
+            `${environment.live_url}/${environment.apply_wfh}/?id=${item.id}`,
+          )
           .subscribe(
             (res: any) => {
-              this.apiService.showSuccess(res?.message || 'WFH request deleted successfully');
+              this.apiService.showSuccess(
+                res?.message || 'WFH request deleted successfully',
+              );
               this.getleaverequest();
             },
             (error: any) => {
-              this.apiService.showError(error?.error?.detail || error?.error?.message || 'Delete failed');
+              this.apiService.showError(
+                error?.error?.detail ||
+                  error?.error?.message ||
+                  'Delete failed',
+              );
             },
           );
         modelRef.close();
@@ -467,14 +568,23 @@ export class WfhRequestsComponent implements OnInit {
     modelRef.componentInstance.status.subscribe((resp: any) => {
       if (resp === 'ok') {
         this.apiService
-          .patchData(`${environment.live_url}/${environment.apply_wfh}/?id=${item.id}`, { status: 'Cancelled' })
+          .patchData(
+            `${environment.live_url}/${environment.apply_wfh}/?id=${item.id}`,
+            { status: 'Cancelled' },
+          )
           .subscribe(
             (res: any) => {
-              this.apiService.showSuccess(res?.message || 'WFH request cancelled successfully');
+              this.apiService.showSuccess(
+                res?.message || 'WFH request cancelled successfully',
+              );
               this.getleaverequest();
             },
             (error: any) => {
-              this.apiService.showError(error?.error?.detail || error?.error?.message || 'Cancel failed');
+              this.apiService.showError(
+                error?.error?.detail ||
+                  error?.error?.message ||
+                  'Cancel failed',
+              );
             },
           );
         modelRef.close();
@@ -493,19 +603,42 @@ export class WfhRequestsComponent implements OnInit {
       .replace(/\b\w/g, (c) => c.toUpperCase()); // capitalize each word
   }
 
+  // ...existing code...
+  // activeTab: 'mine' | 'team' = 'mine';
 
+  isOwnRequest(item: any): boolean {
+    return (
+      String(item?.employee) === String(this.user_id) ||
+      String(item?.employee_id) === String(this.user_id)
+    );
+  }
 
-  activeTab: 'mine' | 'team' = 'mine';
+  get showTeamTab(): boolean {
+    return (
+      this.userRole === 'Manager' ||
+      this.userRole === 'Admin' ||
+      this.userRole === 'Director'
+    );
+  }
 
-get myRequests(): any[] {
-  return (this.leave_request || []).filter((item: any) => this.isOwnRequest(item));
-}
+  onTabChange(event: number) {
+    this.selectedTabIndex = event;
+    this.activeTab =
+      this.userRole === 'Admin' || event === 1 || this.userRole === 'Director'
+        ? 'team'
+        : 'mine';
+    this.getleaverequest();
+  }
 
-get teamRequests(): any[] {
-  return (this.leave_request || []).filter((item: any) => !this.isOwnRequest(item));
-}
+  get myRequests(): any[] {
+    return (this.leave_request || []).filter((item: any) =>
+      this.isOwnRequest(item),
+    );
+  }
 
-get showTeamTab(): boolean {
-  return this.userRole === 'Manager' || this.userRole === 'Admin' || this.userRole === 'Director';
-}
+  get teamRequests(): any[] {
+    return (this.leave_request || []).filter(
+      (item: any) => !this.isOwnRequest(item),
+    );
+  }
 }

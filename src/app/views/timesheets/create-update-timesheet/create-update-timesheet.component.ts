@@ -1,26 +1,48 @@
-import { Component,ChangeDetectorRef, ElementRef, HostListener, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { Component,ChangeDetectorRef, ElementRef, HostListener, OnDestroy, OnInit, AfterViewInit, ViewChild } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { DatePipe } from '@angular/common';
-import { FormBuilder, FormGroup, FormGroupDirective, Validators } from '@angular/forms';
-import { Observable } from 'rxjs';
+import { FormBuilder, FormControl, FormGroup, FormGroupDirective, Validators } from '@angular/forms';
+import { Observable, Subject } from 'rxjs';
 import { ApiserviceService } from '../../../service/apiservice.service';
 import { environment } from '../../../../environments/environment';
 import { SubModuleService } from '../../../service/sub-module.service';
 import { CommonServiceService } from '../../../service/common-service.service';
 import { FormErrorScrollUtilityService } from '../../../service/form-error-scroll-utility-service.service';
 import {CanComponentDeactivate} from '../../../auth-guard/can-deactivate.guard'
-import { setMaxListeners } from 'events';
+import { MAT_AUTOCOMPLETE_SCROLL_STRATEGY, MatAutocomplete } from '@angular/material/autocomplete';
+import { Overlay } from '@angular/cdk/overlay';
+import { MatAutocompleteService } from '../../../service/mat-autocomplete.service';
+import { ErrorStateMatcher } from '@angular/material/core';
 
 @Component({
   selector: 'app-create-update-timesheet',
   templateUrl: './create-update-timesheet.component.html',
-  styleUrls: ['./create-update-timesheet.component.scss']
+  styleUrls: ['./create-update-timesheet.component.scss'],
+  providers: [
+      {
+        provide: MAT_AUTOCOMPLETE_SCROLL_STRATEGY,
+        useFactory: (overlay: Overlay) => () => overlay.scrollStrategies.close(),
+        deps: [Overlay]
+      }
+    ]
 })
-export class CreateUpdateTimesheetComponent implements CanComponentDeactivate,OnInit,OnDestroy {
+export class CreateUpdateTimesheetComponent implements CanComponentDeactivate,OnInit,OnDestroy,AfterViewInit {
   @ViewChild(FormGroupDirective) formGroupDirective!: FormGroupDirective;
-   @ViewChild('formInputField') formInputField: ElementRef;
+  @ViewChild('formInputField') formInputField!: ElementRef;
+  @ViewChild('jobAuto') jobAutoRef!: MatAutocomplete;
+
+  // ── Autocomplete infrastructure ──
+  private destroy$ = new Subject<void>();
+  jobDisplayControl = new FormControl('');
+  taskDisplayControl = new FormControl('');
+  filteredTasksAuto: any[] = [];
+  displayJobFn!: (item: any) => string;
+  displayTaskFn!: (item: any) => string;
+  jobErrorMatcher!: ErrorStateMatcher;
+  taskErrorMatcher!: ErrorStateMatcher;
+  // ──────────────────────────────────
   BreadCrumbsTitle: any = 'Timesheet';
-  timesheetFormGroup: FormGroup
+  timesheetFormGroup!: FormGroup
   currentDate: any = new Date().toISOString();
   initialFormValue:any
   currentTime: any
@@ -42,12 +64,17 @@ export class CreateUpdateTimesheetComponent implements CanComponentDeactivate,On
 allJobStatus:any=[];
 weekTimesheetSubmitted: boolean = false;
 errorMessage:any='';
+selectedDate:any;
+status423: boolean = false;
   constructor(private fb: FormBuilder, private apiService: ApiserviceService, private datePipe: DatePipe,
     private accessControlService: SubModuleService, private router: Router, private common_service: CommonServiceService,
-    private activeRoute: ActivatedRoute, private formErrorScrollService: FormErrorScrollUtilityService,private cdr: ChangeDetectorRef
+    private activeRoute: ActivatedRoute, private formErrorScrollService: FormErrorScrollUtilityService,private cdr: ChangeDetectorRef,
+    private autoSvc: MatAutocompleteService
   ) {
     this.user_id = sessionStorage.getItem('user_id');
     this.user_role_name = sessionStorage.getItem('user_role_name')
+    this.displayJobFn = this.autoSvc.createDisplayFn('job_name');
+    this.displayTaskFn = this.autoSvc.createDisplayFn('value');
     if (this.activeRoute.snapshot.paramMap.get('id')) {
       this.common_service.setTitle('Update ' + this.BreadCrumbsTitle)
       this.timesheet_id = this.activeRoute.snapshot.paramMap.get('id')
@@ -60,6 +87,7 @@ errorMessage:any='';
 
   ngOnInit(): void {
     this.getAllDropdownData();
+    this.setupAutocomplete();
     const now = new Date();
     const hours = now.getHours().toString().padStart(2, '0');
     const minutes = now.getMinutes().toString().padStart(2, '0');
@@ -97,7 +125,9 @@ errorMessage:any='';
 
   }
   ngOnDestroy(): void {
-this.formErrorScrollService.resetHasUnsavedValue();
+    this.formErrorScrollService.resetHasUnsavedValue();
+    this.destroy$.next();
+    this.destroy$.complete();
   }
   initialForm() {
     this.timesheetFormGroup = this.fb.group({
@@ -179,11 +209,16 @@ this.formErrorScrollService.resetHasUnsavedValue();
       (res: any) => {
         // console.log('task data', res)
         this.taskList = res;
-        this.taskList.forEach((task_name) => {
+        this.filteredTasksAuto = [...res];
+        this.taskList.forEach((task_name: any) => {
           if (task_name.value === 'Review' && this.user_role_name === 'Manager') {
             this.timesheetFormGroup.patchValue({ task: task_name.id })
+            this.taskDisplayControl.setValue(task_name, { emitEvent: false });
+            this.filteredTasksAuto = [task_name];
           } else if (task_name.value === 'Processing' && this.user_role_name === 'Accountant') {
             this.timesheetFormGroup.patchValue({ task: task_name.id })
+            this.taskDisplayControl.setValue(task_name, { emitEvent: false });
+            this.filteredTasksAuto = [task_name];
           }
         });
       },
@@ -192,11 +227,61 @@ this.formErrorScrollService.resetHasUnsavedValue();
       }
     )
   }
-  dateSelected(event){
+  dateSelected(event:any){
   const { startOfWeek, endOfWeek } = this.getWeekRangeFromSelectedDate(this.formatDateToString(event.value));
   this.checkTimesheetSubmission(startOfWeek,endOfWeek);
-  this.getStartTimePreviousData()
+  this.getStartTimePreviousData();
+  this.selectedDate = this.datePipe.transform(event.value, 'yyyy-MM-dd');
+  this.checkValidation();
   }
+
+  checkValidation() {
+    let filterQuery = this.getFilterBaseUrl();
+    if (this.selectedDate) {
+        filterQuery += `&timesheet-date=${this.selectedDate}`;
+      }
+     this.apiService.getData(`${environment.live_url}/${environment.vlp_timesheets}/${filterQuery}`).subscribe(
+      (res: any) => {
+        this.status423 = false;
+        this.toggleFormState(this.status423);
+      },
+      (error: any) => {
+        if(error.status===423){
+          this.status423 = true;
+           this.toggleFormState(this.status423);
+        } else if(error.status===400){
+           this.status423 = true;
+           this.toggleFormState(this.status423);
+        } else{
+          this.status423 = false;
+          this.toggleFormState(this.status423);
+        }
+        console.log(error)
+        this.apiService.showError(error?.error?.detail);
+      }
+    )
+  }
+
+  toggleFormState(isLocked: boolean) {
+    Object.keys(this.timesheetFormGroup.controls).forEach(key => {
+      if (isLocked && key !== 'date') {
+        this.timesheetFormGroup.get(key)?.disable({ emitEvent: false });
+      } else {
+        this.timesheetFormGroup.get(key)?.enable({ emitEvent: false });
+      }
+    });
+    this.timesheetFormGroup.updateValueAndValidity();
+}
+  isSubmitDisabled(): boolean {
+    return this.weekTimesheetSubmitted || this.status423 || this.timesheetFormGroup.invalid;
+  }
+  public getFilterBaseUrl(): string {
+     const base = `?page=${1}&page_size=${50}`;
+     const employeeParam = this.user_role_name !== 'Admin' ? `&timesheet-employee=${this.user_id}` : '';
+     return `${base}${employeeParam}`;
+    
+  }
+  
 formatDateToString(date: Date): string | null {
     return this.datePipe.transform(date, 'yyyy-MM-dd'); // Output: '2025-04-13'
   }
@@ -222,7 +307,7 @@ getWeekRangeFromSelectedDate(date: any): { startOfWeek: string; endOfWeek: strin
 }
 
 
-checkTimesheetSubmission(startDate,endDate) {
+checkTimesheetSubmission(startDate:any,endDate:any) {
   this.errorMessage='';
   this.weekTimesheetSubmitted=false;
     let query = `?employee-id=${this.user_id}&from-date=${startDate}&to-date=${endDate}`
@@ -426,6 +511,14 @@ this.timesheetFormGroup.controls['time_spent']?.reset();
   public resetFormState() {
     this.formGroupDirective?.resetForm();
     this.formErrorScrollService.resetHasUnsavedValue();
+    this.jobDisplayControl.setValue('', { emitEvent: false });
+    this.taskDisplayControl.setValue('', { emitEvent: false });
+    this.selectedItemsMap['job_id'] = [];
+    this.dropdownState.job_id.list = [];
+    this.dropdownState.job_id.page = 1;
+    this.dropdownState.job_id.search = '';
+    this.dropdownState.job_id.initialized = false;
+    this.filteredTasksAuto = [...this.taskList];
     const now = new Date();
     const hours = now.getHours().toString().padStart(2, '0');
     const minutes = now.getMinutes().toString().padStart(2, '0');
@@ -479,7 +572,7 @@ dateClass = (date: Date) => {
 
 pageSizeDropdown = 10;
 
-dropdownState = {
+dropdownState:any = {
     job_id: {
     page: 1,
     list: [],
@@ -490,7 +583,7 @@ dropdownState = {
   },
 };
 
-dropdownEndpoints = {
+dropdownEndpoints :any = {
   job_id: environment.jobs_search,
 };
 
@@ -588,7 +681,7 @@ updateSelectedItems(key: string, selectedIds: any[]) {
   // Add new selected items from currently loaded list if missing
   selectedIds.forEach(id => {
     if (!selectedItems.some(item => item.id === id)) {
-      const found = state.list.find(item => item.id === id);
+      const found = state.list.find((item:any) => item.id === id);
       if (found) {
         selectedItems.push(found);
       } else {
@@ -603,14 +696,14 @@ updateSelectedItems(key: string, selectedIds: any[]) {
 getOptionsWithSelectedOnTop(key: string) {
   const state = this.dropdownState[key];
   const selectedItems = this.selectedItemsMap[key] || [];
-  const unselectedItems = state.list.filter(item =>
-    !selectedItems.some(sel => sel.id === item.id)
+  const unselectedItems = state.list.filter((item: any) =>
+    !selectedItems.some((sel: any) => sel.id === item.id)
   );
 
   return [...selectedItems, ...unselectedItems];
 }
 
-onDropdownOpened(isOpen, key: string) {
+onDropdownOpened(isOpen:boolean, key: string) {
   if (isOpen) {
     // ⬇⬇ ADD THIS BLOCK ⬇⬇
     if (!this.dropdownState[key].initialized || this.dropdownState[key].list.length === 0) {
@@ -631,7 +724,7 @@ onDropdownOpened(isOpen, key: string) {
   }
 }
 
-commonOnchangeFun(event, key){
+commonOnchangeFun(event:any, key:string){
   this.updateSelectedItems(key, event.value);
 }
 
@@ -657,12 +750,130 @@ patchDropdownValuesForEdit(data: any) {
         (it: any) => it?.id !== idVal
       );
       this.dropdownState[key].list.unshift(obj);
+      // Patch display control for autocomplete
+      if (key === 'job_id') {
+        this.jobDisplayControl.setValue(obj, { emitEvent: false });
+      }
     }
   };
   setDropdownValue('job_id', 'job_id', 'job_name');
+  // Patch task display control
+  if (data?.task) {
+    const taskObj = this.taskList.find((t: any) => t.id === data.task);
+    if (taskObj) {
+      this.taskDisplayControl.setValue(taskObj, { emitEvent: false });
+      this.filteredTasksAuto = [taskObj];
+    }
+  }
   this.cdr.detectChanges();
 }
 
+  // ════════════ Autocomplete helper methods ═════════════
 
+  ngAfterViewInit(): void {
+    this.autoSvc.setupScrollListener(
+      this.jobAutoRef,
+      this.dropdownState.job_id,
+      () => this.fetchData('job_id', true),
+      this.destroy$
+    );
+  }
+
+  private setupAutocomplete(): void {
+    this.jobErrorMatcher = this.autoSvc.createErrorMatcher(
+      () => this.timesheetFormGroup?.get('job_id') as FormControl
+    );
+    this.taskErrorMatcher = this.autoSvc.createErrorMatcher(
+      () => this.timesheetFormGroup?.get('task') as FormControl
+    );
+
+    // Paginated: Job
+    this.autoSvc.setupPaginatedSearch(this.jobDisplayControl, (value: string) => {
+      if (!value) {
+        this.timesheetFormGroup.get('job_id')?.setValue('');
+        this.timesheetFormGroup.get('job_id')?.markAsDirty();
+        this.selectedItemsMap['job_id'] = [];
+      } else {
+        this.selectedItemsMap['job_id'] = [];
+        this.timesheetFormGroup.get('job_id')?.setValue('');
+      }
+      this.onSearch('job_id', value);
+    }, this.destroy$);
+
+    // Non-paginated: Task (local filter)
+    this.autoSvc.setupLocalFilter(
+      this.taskDisplayControl,
+      () => this.taskList,
+      (filtered) => {
+        this.filteredTasksAuto = filtered;
+        this.timesheetFormGroup.get('task')?.setValue('');
+        this.timesheetFormGroup.get('task')?.markAsDirty();
+      },
+      'value',
+      this.destroy$,
+      200
+    );
+  }
+
+  onJobOptionSelected(event: any): void {
+    const item = event.option.value;
+    this.timesheetFormGroup.get('job_id')?.setValue(item.id);
+    this.timesheetFormGroup.get('job_id')?.markAsDirty();
+    this.jobDisplayControl.setValue(item, { emitEvent: false });
+    this.updateSelectedItems('job_id', [item.id]);
+  }
+
+  onTaskOptionSelected(event: any): void {
+    const item = event.option.value;
+    this.timesheetFormGroup.get('task')?.setValue(item.id);
+    this.timesheetFormGroup.get('task')?.markAsDirty();
+    this.taskDisplayControl.setValue(item, { emitEvent: false });
+    this.filteredTasksAuto = [item];
+  }
+
+  onJobFocus(): void {
+    this.autoSvc.onFocus(
+      this.dropdownState.job_id,
+      this.selectedItemsMap['job_id'] || [],
+      () => this.fetchData('job_id', false)
+    );
+  }
+
+  onTaskFocus(): void {
+    const ctrl = this.timesheetFormGroup.get('task');
+    if (!ctrl?.value) {
+      this.filteredTasksAuto = [...this.taskList];
+    }
+  }
+
+  onJobBlur(): void {
+    setTimeout(() => {
+      const ctrl = this.timesheetFormGroup.get('job_id');
+      const displayVal = this.jobDisplayControl.value;
+      if (!displayVal || (typeof displayVal === 'string' && !displayVal.trim())) {
+        ctrl?.setValue('');
+        this.jobDisplayControl.setValue('');
+      }
+      ctrl?.markAsTouched();
+    }, 150);
+  }
+
+  onTaskBlur(): void {
+    setTimeout(() => {
+      const ctrl = this.timesheetFormGroup.get('task');
+      const displayVal = this.taskDisplayControl.value;
+      if (!displayVal || (typeof displayVal === 'string' && !displayVal.trim())) {
+        ctrl?.setValue('');
+        this.taskDisplayControl.setValue('');
+        this.filteredTasksAuto = [...this.taskList];
+      } else if (ctrl?.value) {
+        const selectedItem = this.taskList.find((t: any) => t.id === ctrl.value);
+        if (selectedItem) {
+          this.taskDisplayControl.setValue(selectedItem, { emitEvent: false });
+        }
+      }
+      ctrl?.markAsTouched();
+    }, 150);
+  }
 
 }
