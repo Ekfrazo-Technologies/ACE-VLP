@@ -50,4 +50,9 @@ export const tableColumns = [
     key: 'diff_days',
     sortable: false
   },
+  {
+    label: 'TES',
+    key: 'tes',
+    sortable: false,
+  },
   ]
