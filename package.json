@@ -9,6 +9,7 @@
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
+    "build:zip": "ng build --configuration production && powershell -NoProfile -Command \"if (Test-Path 'vlp.zip') { Remove-Item 'vlp.zip' -Force }; Compress-Archive -Path 'dist/vlp/*' -DestinationPath 'vlp.zip' -Force\"",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },
