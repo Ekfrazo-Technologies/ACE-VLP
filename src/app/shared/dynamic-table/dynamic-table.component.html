@@ -501,6 +501,8 @@
           <td class="bg-transparent"><b>Average Productivity (hrs): {{ config?.tableFooterContent?.avg_quantitative_productivity !== null && config?.tableFooterContent?.avg_quantitative_productivity !== undefined && config?.tableFooterContent?.avg_quantitative_productivity !== '' ? config?.tableFooterContent?.avg_quantitative_productivity : 'NA' }}</b></td>
           <!-- cr -->
           <!-- <td class="bg-transparent"><b>Actual TAT Days: {{ config?.tableFooterContent?.avg_tat !== null && config?.tableFooterContent?.avg_tat !== undefined && config?.tableFooterContent?.avg_tat !== '' ? config?.tableFooterContent?.avg_tat : 'NA' }}</b></td> -->
+          <td class="bg-transparent"></td>
+          <td class="bg-transparent"><b>Average TES: {{ config?.tableFooterContent?.avg_tes !== null && config?.tableFooterContent?.avg_tes !== undefined && config?.tableFooterContent?.avg_tes !== '' ? config?.tableFooterContent?.avg_tes : 'NA' }}</b></td>
         </tr>
       <tr *ngIf="config?.averageProductivity" class="bg-transparent" >
         <td colspan="11" class="bg-transparent"></td>

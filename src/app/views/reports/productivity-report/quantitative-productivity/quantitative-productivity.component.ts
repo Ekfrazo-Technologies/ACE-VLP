@@ -191,7 +191,14 @@ export class QuantitativeProductivityComponent implements OnInit,OnChanges {
               is_primary:item?.employees?.find((emp: any) => emp?.is_primary === true)?.employee_name || '',
               //  diff_days:item.tat_days.diff_days
             }));
-            let tableFooterContent = {'total_estimated_time':res?.total_estimated_time,'total_actual_time':res?.total_actual_time,'avg_quantitative_productivity':res?.avg_quantitative_productivity,'avg_tat':res?.avg_tat}
+            let tableFooterContent = {
+              'total_estimated_time': res?.total_estimated_time,
+              'total_actual_time': res?.total_actual_time,
+              'avg_quantitative_productivity': res?.avg_quantitative_productivity,
+              'avg_tat': res?.avg_tat,
+              'avg_tes': res?.avg_tes ?? res?.tes,
+              'tes': res?.tes ?? res?.avg_tes,
+            }
             this.tableConfig = {
               columns: tableColumns.map(col => ({
                 ...col,
