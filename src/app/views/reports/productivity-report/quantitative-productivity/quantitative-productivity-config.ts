@@ -46,8 +46,13 @@ export const tableColumns = [
   { label: 'Act. Hrs', key: 'actual_hours', sortKey: 'total_actual_minutes', sortable: true},
   { label: 'Rem./Ex. Hrs', key: 'remaining_hours', sortKey: 'remaining_minutes', sortable: true },
   {
-    label: 'TAT (Days',
+    label: 'TAT (Days)',
     key: 'diff_days',
+    sortable: false
+  },
+  {
+    label: 'TES',
+    key: 'tes',
     sortable: false
   },
   ]

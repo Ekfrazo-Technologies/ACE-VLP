@@ -5,21 +5,21 @@ export const environment = {
 
   // Testing url
   // media_url: 'https://vlp.thestorywallcafe.com',
-  media_url: 'https://vlp-prod.s3.amazonaws.com',
-  live_url: 'https://vlp.thestorywallcafe.com/api-vlp',
+  // media_url: 'https://vlp-prod.s3.amazonaws.com', //comment 
+  // live_url: 'https://vlp.thestorywallcafe.com/api-vlp',//comment
   // live_url:'https://tmsknx8b-8005.inc1.devtunnels.ms/api-vlp',
-  socket_url: 'projectacedevelop.thestorywallcafe.com',
+  // socket_url: 'projectacedevelop.thestorywallcafe.com',//comment
 
   // UAT url
   // media_url: 'https://vlpuat.thestorywallcafe.com',
   // live_url:'https://vlpuat.thestorywallcafe.com/api-vlp',
   // socket_url:'projectacedevelop.thestorywallcafe.com',
 
-
-  // Staging URL
-  // media_url: 'https://vlp-prod.s3.amazonaws.com',
-  // live_url:'https://staging.vlpworkflow.com/api-vlp',
-  // socket_url:'projectacedevelop.thestorywallcafe.com',
+ // Staging URL / Production URL
+  media_url: 'https://vlp-prod.s3.amazonaws.com',
+  
+  live_url: 'https://vlpworkflow.com/api-vlp',
+  socket_url:'projectacedevelop.thestorywallcafe.com',
 
   //  vlp Auth
   login: `login`,
