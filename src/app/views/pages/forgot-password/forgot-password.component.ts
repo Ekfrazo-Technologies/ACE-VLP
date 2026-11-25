@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnInit, ViewChild } from '@angular/core';
 import { FormBuilder, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ApiserviceService } from '../../../service/apiservice.service';
@@ -9,13 +9,29 @@ import { environment } from 'src/environments/environment';
   templateUrl: './forgot-password.component.html',
   styleUrls: ['./forgot-password.component.scss']
 })
-export class ForgotPasswordComponent implements OnInit {
+export class ForgotPasswordComponent implements OnInit, AfterViewInit {
+  @ViewChild('emailInput') emailInput?: ElementRef<HTMLInputElement>;
   
   constructor(private builder:FormBuilder, private api:ApiserviceService, private router:Router) { }
   
   disableButton:boolean = false;
   ngOnInit(): void {
   }
+  ngAfterViewInit(): void {
+    this.focusEmailInput();
+  }
+
+  private focusEmailInput(): void {
+    const inputElement = this.emailInput?.nativeElement;
+    if (!inputElement) {
+      return;
+    }
+
+    inputElement.focus();
+    const valueLength = inputElement.value?.length ?? 0;
+    inputElement.setSelectionRange(valueLength, valueLength);
+  }
+
   forgotForm = this.builder.group({
     email:['',[Validators.required, Validators.pattern('^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,4}$')]],
  
