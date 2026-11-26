@@ -1,4 +1,11 @@
-.performance-cards{
-    max-height: 72vh !important;
-    overflow: scroll !important;
+
+.performance-cards {
+  max-height: 72vh !important;
+  overflow: scroll !important;
+}
+
+.filter-action-buttons {
+  gap: 16px;
+  margin-left: 60px;
+  transform: translateY(-14px);
 }
