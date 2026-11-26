@@ -34,6 +34,7 @@ export class WorkCalendarComponent implements OnInit {
   filteredWeekendDays: any = [];
   shouldDisableFields: boolean = false;
   accessPermissions = [];
+  canShowActionButtons: boolean = false;
   user_role_name: any;
   user_id: any;
   isEnabledEdit!: boolean;
@@ -129,10 +130,11 @@ export class WorkCalendarComponent implements OnInit {
   getModuleAccess() {
     this.accessControlService.getAccessForActiveUrl(this.user_id).subscribe(
       (res: any) => {
-        let temp = res.find((item: any) => item.name === 'End Clients');
-        // console.log('temp',temp)
+        const temp = res.find((item: any) => item.name === 'Work Calendar');
         this.accessPermissions = temp?.operations;
-        // this.shouldDisableFields = this.accessPermissions[0]?.['create'];
+        this.canShowActionButtons = this.user_role_name === 'Admin'
+          || this.accessPermissions?.[0]?.['update']
+          || this.accessPermissions?.[0]?.['create'];
         this.cdr.detectChanges();
       }
     )

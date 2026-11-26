@@ -3,9 +3,13 @@
         <form [formGroup]="workCalendarForm">
             <div class="d-flex justify-content-between">
                 <h5 class="m-2 fw-bold">Week Definition</h5>
-                <button *ngIf="itemId" mat-raised-button class="proceedbtn mat-btn-s me-3" type="button" [disabled]="isEnabledEdit"
+                <!-- <button *ngIf="itemId" mat-raised-button class="proceedbtn mat-btn-s me-3" type="button" [disabled]="isEnabledEdit"
                     (click)="enbleFields()">
-                    <span>Edit</span></button>
+                    <span>Edit</span></button> -->
+                <button *ngIf="itemId && canShowActionButtons" mat-raised-button class="proceedbtn mat-btn-s me-3" type="button"
+                    [disabled]="isEnabledEdit" (click)="enbleFields()">
+                    <span>Edit</span>
+                </button>
             </div>
             <div class="row mx-0">
                 <div class="col-sm-12 col-md-12 col-lg-5">
@@ -123,12 +127,20 @@
             </div>
         </form>
         <div class="my-3 px-4">
-            <button mat-raised-button class="proceedbtn mat-btn-s me-3" type="submit" (click)="saveWorkCalendarData()"
+            <!-- <button mat-raised-button class="proceedbtn mat-btn-s me-3" type="submit" (click)="saveWorkCalendarData()"
                 [disabled]="!shouldDisableFields">
                 <span>{{buttonName}}</span></button>
             <button mat-raised-button class="cancel-button mat-btn-s" type="button" (click)="cancelAndBack()"
                 [disabled]="!shouldDisableFields">
-                <span>Cancel</span></button>
+                <span>Cancel</span></button> -->
+            <button *ngIf="canShowActionButtons && shouldDisableFields" mat-raised-button class="proceedbtn mat-btn-s me-3" type="submit"
+                (click)="saveWorkCalendarData()" [disabled]="!shouldDisableFields">
+                <span>{{buttonName}}</span>
+            </button>
+            <button *ngIf="canShowActionButtons && shouldDisableFields" mat-raised-button class="cancel-button mat-btn-s" type="button"
+                (click)="cancelAndBack()" [disabled]="!shouldDisableFields">
+                <span>Cancel</span>
+            </button>
         </div>
     </section>
 </div>
