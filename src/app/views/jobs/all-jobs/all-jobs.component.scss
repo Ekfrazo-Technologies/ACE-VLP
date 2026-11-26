@@ -94,18 +94,18 @@ width: 0px !important;
 //     width: 20%;
 // }
 .job_name{
-  width: 80% !important;
+  width: auto !important;
+}
+
+.client-col {
+  min-width: 220px !important;
+  width: 220px !important;
+  max-width: 220px !important;
 }
 
 .client-name-cell {
-  display: -webkit-box;
-  line-clamp: 2;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: block;
   white-space: normal;
   line-height: 1.4;
-  max-height: 2.8em;
   word-break: break-word;
 }
