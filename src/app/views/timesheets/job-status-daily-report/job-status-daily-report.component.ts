@@ -12,7 +12,7 @@ import { FilterQueryService } from '../../../service/filter-query.service';
   styleUrls: ['./job-status-daily-report.component.scss']
 })
 export class JobStatusDailyReportComponent implements OnInit {
-  BreadCrumbsTitle: any = 'Timesheet Detailed Report';
+  BreadCrumbsTitle: any = 'Day End Reports';
   term: string = '';
   tableSize: number = 50;
   page: any = 1;
@@ -29,7 +29,7 @@ export class JobStatusDailyReportComponent implements OnInit {
   };
   user_role_name: string;
   user_id: string;
-  tableData: ({ label: string; key: string; sortable: boolean; filterable?: undefined; filterType?: undefined; } | { label: string; key: string; sortable: boolean; filterable: boolean; filterType: string; })[];
+  tableData: ({ label: string; key: string; sortable: boolean; filterable?: undefined; filterType?: undefined; } | { label: string; key: string; sortable: boolean; filterable: boolean; filterType: string; })[] = [];
   selectedClientIds: any = [];
   selectedJobIds: any = [];
   selectedGroupIds: any = [];
@@ -142,7 +142,7 @@ export class JobStatusDailyReportComponent implements OnInit {
     )
   }
 
-  onSorting(data) {
+  onSorting(data: { detail: { directionValue: string; sortValue: string } }) {
     this.directionValue = data.detail.directionValue;
     this.sortValue = data.detail.sortValue;
     this.getTableData({
@@ -199,7 +199,7 @@ export class JobStatusDailyReportComponent implements OnInit {
     });
   }
 
-  exportCsvOrPdf(fileType) {
+  exportCsvOrPdf(fileType: string) {
     let query = `?download_format=${fileType}`
     const searchParam = this.term?.trim().length >= 2 ? `&search=${encodeURIComponent(this.term.trim())}` : '';
     if (this.user_role_name !== 'Admin') {
@@ -256,7 +256,7 @@ export class JobStatusDailyReportComponent implements OnInit {
   }
 
   private updateFilterColumn(key: string, cache: any) {
-    this.tableConfig.columns = this.tableConfig.columns.map(col =>
+    this.tableConfig.columns = this.tableConfig.columns.map((col: any) =>
       col.paramskeyId === key
         ? {
           ...col,
@@ -312,7 +312,7 @@ export class JobStatusDailyReportComponent implements OnInit {
             let filterOptions: any = [];
 
             // Try to retain old filterOptions
-            const existingCol = this.tableConfig?.columns?.find(c => c.key === col.key);
+            const existingCol = this.tableConfig?.columns?.find((c: any) => c.key === col.key);
             if (existingCol?.filterOptions?.length) {
               filterOptions = existingCol.filterOptions;
             }
@@ -417,7 +417,7 @@ export class JobStatusDailyReportComponent implements OnInit {
 
         cache.data = [
           ...cache.data,
-          ...newData.filter(opt => !cache.data.some(existing => existing.id === opt.id))
+          ...newData.filter((opt: any) => !cache.data.some((existing: any) => existing.id === opt.id))
         ];
         cache.page = nextPage;
         cache.total = res.total_no_of_record || cache.total;
